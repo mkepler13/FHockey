@@ -4,6 +4,13 @@ import asyncio
 import os
 import logging
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup  # Import BeautifulSoup for scraping
+import requests  # Import requests for HTTP requests
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -68,6 +75,42 @@ test_players_to_track = [
     {"name": "Jake Walman", "id": 8478013},
     {"name": "Darnell Nurse", "id": 8477498}
 ]
+
+#team name dictionary
+TEAM_NAME_TO_ABBREVIATION = {
+    "Anaheim Ducks": "ANA", "Ducks d'Anaheim": "ANA",
+    "Arizona Coyotes": "ARI", "Coyotes de l'Arizona": "ARI",
+    "Boston Bruins": "BOS", "Bruins de Boston": "BOS",
+    "Buffalo Sabres": "BUF", "Sabres de Buffalo": "BUF",
+    "Calgary Flames": "CGY", "Flames de Calgary": "CGY",
+    "Carolina Hurricanes": "CAR", "Hurricanes de la Caroline": "CAR",
+    "Chicago Blackhawks": "CHI", "Blackhawks de Chicago": "CHI",
+    "Colorado Avalanche": "COL", "Avalanche du Colorado": "COL",
+    "Columbus Blue Jackets": "CBJ", "Blue Jackets de Columbus": "CBJ",
+    "Dallas Stars": "DAL", "Stars de Dallas": "DAL",
+    "Detroit Red Wings": "DET", "Red Wings de Détroit": "DET",
+    "Edmonton Oilers": "EDM", "Oilers d'Edmonton": "EDM",
+    "Florida Panthers": "FLA", "Panthers de la Floride": "FLA",
+    "Los Angeles Kings": "LAK", "Kings de Los Angeles": "LAK",
+    "Minnesota Wild": "MIN", "Wild du Minnesota": "MIN",
+    "Montreal Canadiens": "MTL", "Canadiens de Montréal": "MTL",
+    "Nashville Predators": "NSH", "Predators de Nashville": "NSH",
+    "New Jersey Devils": "NJD", "Devils du New Jersey": "NJD",
+    "New York Islanders": "NYI", "Islanders de New York": "NYI",
+    "New York Rangers": "NYR", "Rangers de New York": "NYR",
+    "Ottawa Senators": "OTT", "Senateurs d'Ottawa": "OTT",
+    "Philadelphia Flyers": "PHI", "Flyers de Philadelphie": "PHI",
+    "Pittsburgh Penguins": "PIT", "Penguins de Pittsburgh": "PIT",
+    "San Jose Sharks": "SJS", "Sharks de San Jose": "SJS",
+    "Seattle Kraken": "SEA", "Kraken de Seattle": "SEA",
+    "St. Louis Blues": "STL", "Blues de Saint-Louis": "STL",
+    "Tampa Bay Lightning": "TBL", "Lightning de Tampa Bay": "TBL",
+    "Toronto Maple Leafs": "TOR", "Maple Leafs de Toronto": "TOR",
+    "Vancouver Canucks": "VAN", "Canucks de Vancouver": "VAN",
+    "Vegas Golden Knights": "VGK", "Golden Knights de Vegas": "VGK",
+    "Washington Capitals": "WSH", "Capitals de Washington": "WSH",
+    "Winnipeg Jets": "WPG", "Jets de Winnipeg": "WPG",
+}
 
 # API YEAR
 NHL_YEAR = "20242025"
@@ -142,6 +185,95 @@ async def track_fantrax_trades():
 
         await asyncio.sleep(300)  # Check for new trades every 5 minutes
 
+#WEBSCRAPE
+
+def convert_team_name_to_abbreviation(team_name: str):
+    """Convert full team name (English/French) to team abbreviation."""
+    team_name = team_name.strip().lower()
+    for full_name, abbreviation in TEAM_NAME_TO_ABBREVIATION.items():
+        if team_name == full_name.lower():
+            # Print out the full name and the abbreviation for debugging
+            print(f"Team Name: {full_name} -> Abbreviation: {abbreviation}")
+            return abbreviation
+    # If no abbreviation found, return None
+    return None
+
+
+# Scrape playoff odds from moneypuck.com
+async def get_playoff_odds(team_name=None):
+    """Fetch playoff odds using Selenium and filter for a specific team if provided."""
+    url = "https://moneypuck.com/predictions.htm"
+
+    # Setup Selenium WebDriver
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # Run without opening a browser
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    try:
+        driver.get(url)
+        await asyncio.sleep(5)  # Wait for JavaScript to load
+
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        div_content = soup.find('div', {'id': 'includedContent'})
+
+        if not div_content or not div_content.text.strip():
+            print("Error: No content found in the div.")
+            return "Error: No data found."
+
+        # Extract all team abbreviations and their corresponding playoff odds
+        teams_odds = {}
+
+        rows = div_content.find_all('tr')
+        for row in rows:
+            b_tag = row.find('b')  # Find the <b> tag for the team abbreviation
+            td_tags = row.find_all('td')  # Find all <td> tags in the row
+
+            if b_tag and len(td_tags) > 1:
+                team_abbr = b_tag.get_text().strip()
+                playoff_odds = td_tags[1].get_text().strip()  # The second <td> contains the playoff odds
+                teams_odds[team_abbr] = playoff_odds
+
+        print("Teams and Playoff Odds:", teams_odds)  # Print the teams and their playoff odds
+
+        # If a team input is provided, check if it's a full name or abbreviation
+        if team_name:
+            # Check if the input is an abbreviation (i.e., 3 letters)
+            team_abbr = team_name.strip().upper()
+            
+            if len(team_abbr) == 3:  # It's likely an abbreviation
+                playoff_odds = teams_odds.get(team_abbr)
+                if playoff_odds:
+                    return f"Playoff odds for {team_abbr}: {playoff_odds}"
+                else:
+                    return f"Playoff odds for abbreviation '{team_abbr}' not found."
+            
+            else:  # It's a full team name, convert it to abbreviation
+                team_abbr = convert_team_name_to_abbreviation(team_name.strip())
+                if not team_abbr:
+                    return f"Error: Team name '{team_name}' not recognized."
+
+                # Look up the playoff odds for the abbreviation
+                playoff_odds = teams_odds.get(team_abbr.upper())  # Ensure abbreviation is uppercase
+                if playoff_odds:
+                    return f"Playoff odds for {team_name} ({team_abbr}): {playoff_odds}"
+                else:
+                    return f"Playoff odds for abbreviation '{team_abbr}' not found."
+
+        else:
+            return teams_odds  # Return the full dictionary of teams and playoff odds
+
+    except Exception as e:
+        return f"Error: {e}"
+
+    finally:
+        driver.quit()
+
+
+#NHL API
 
 async def get_player_info(player_id):
     """Fetch player info to verify if the player exists and return their full name."""
@@ -384,13 +516,13 @@ async def on_message(message):
             return
         await message.channel.send("I am alive and listening!")
 
-    if content_lower.startswith("!points"):
+    if content_lower.startswith("!standings"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
         if message.channel.id not in allowed_channels:
             return
         parts = message.content.split(maxsplit=1)
         if len(parts) != 2:
-            await message.channel.send("Usage: `!points <team_name>`")
+            await message.channel.send("Usage: `!standings <team_name>`")
             return
 
         team_name = parts[1]
@@ -410,6 +542,35 @@ async def on_message(message):
         result = await get_player_points(player_input)
         await message.channel.send(result)
 
+    if content_lower.startswith("!playoffodds"):
+        allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
+        if message.channel.id not in allowed_channels:
+            return
+
+        # Extract the team name from the command (if any)
+        command_parts = content_lower.split(" ")
+        team_name = " ".join(command_parts[1:]).strip()  # Get the team name after the command
+
+        # If no team name is provided, instruct the user to provide one
+        if not team_name:
+            await message.channel.send("Please provide a team name after the command, e.g., `!playoffodds Team A`.")
+        else:
+            # Convert the team name to its abbreviation
+            team_abbreviation = convert_team_name_to_abbreviation(team_name)
+        
+            # Check if the team abbreviation was successfully found
+            if team_abbreviation:
+                # Print the abbreviated name to the console for debugging purposes
+                print(f"Converted Team Name: {team_abbreviation}")
+            
+                # Fetch the playoff odds for the team using the abbreviation
+                odds = await get_playoff_odds(team_abbreviation)
+                await message.channel.send(odds)
+            else:
+                # If the team name couldn't be converted, send an error message
+                await message.channel.send(f"Sorry, I couldn't find the team '{team_name}'. Please make sure the name is correct and try again.")
+
+        
     # Shitpost messages
     if content_lower.startswith("!freepetey"):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
