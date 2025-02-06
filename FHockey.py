@@ -19,6 +19,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_BOTSPAM_CHANNEL_ID = int(os.getenv("DISCORD_BOTSPAM_CHANNEL_ID", "0"))
 DISCORD_TRADE_CHANNEL_ID = int(os.getenv("DISCORD_TRADE_CHANNEL_ID", "0"))
+DISCORD_INFO_CHANNEL_ID = int(os.getenv("DISCORD_INFO_CHANNEL_ID", "0"))
 FANTRAX_USERNAME = os.getenv("FANTRAX_USERNAME")
 FANTRAX_PASSWORD = os.getenv("FANTRAX_PASSWORD")
 FANTRAX_LEAGUE_ID = os.getenv("FANTRAX_LEAGUE_ID")
@@ -30,6 +31,8 @@ if DISCORD_BOTSPAM_CHANNEL_ID is None:
     raise ValueError("No DISCORD_BOTSPAM_CHANNEL_ID found in .env file.")
 if DISCORD_TRADE_CHANNEL_ID is None:
     raise ValueError("No DISCORD_TRADE_CHANNEL_ID found in .env file.")
+if DISCORD_INFO_CHANNEL_ID is None:
+    raise ValueError("No DISCORD_INFO_CHANNEL_ID found in .env file.")
 
 # Check Fantrax credentials and set flag
 FANTRAX_ENABLED = True
@@ -50,6 +53,7 @@ NHL_STATS_URL = "https://api.nhle.com/stats/rest/en/skater/summary?cayenneExp=pl
 NHL_PLAYER_INFO_URL = "https://api-web.nhle.com/v1/player/{}/landing"
 NHL_PLAYER_SEARCH_URL = "https://api-web.nhle.com/v1/search/player?q={}"
 
+ADMIN_OVERRIDE = False  # Set this to True to allow add/delete channel commands
 
 # Tracked player
 
@@ -574,6 +578,55 @@ async def on_message(message):
     # Shitpost messages
     if content_lower.startswith("!freepetey"):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
+        # Add Channel Command
+
+    # Admin Override Commands (Add & Delete Channel)
+    if ADMIN_OVERRIDE:
+        if content_lower.startswith("!addchannel"):
+            allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Restrict command usage to specific channels
+            if message.channel.id not in allowed_channels:
+                return
+
+            parts = message.content.split(maxsplit=1)
+            if len(parts) != 2:
+                await message.channel.send("Usage: `!addchannel <channel_name>`")
+                return
+
+            channel_name = parts[1]
+            guild = message.guild
+
+            # Check if the channel already exists
+            existing_channel = discord.utils.get(guild.channels, name=channel_name)
+            if existing_channel:
+                await message.channel.send(f"A channel named '{channel_name}' already exists.")
+                return
+
+            # Create the channel
+            new_channel = await guild.create_text_channel(channel_name)
+            await message.channel.send(f"✅ Channel '{new_channel.name}' has been created!")
+
+        if content_lower.startswith("!deletechannel"):
+            allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Restrict command usage to specific channels
+            if message.channel.id not in allowed_channels:
+                return
+
+            parts = message.content.split(maxsplit=1)
+            if len(parts) != 2:
+                await message.channel.send("Usage: `!deletechannel <channel_name>`")
+                return
+
+            channel_name = parts[1]
+            guild = message.guild
+
+            # Find the channel
+            channel_to_delete = discord.utils.get(guild.channels, name=channel_name)
+            if not channel_to_delete:
+                await message.channel.send(f"❌ No channel named '{channel_name}' found.")
+                return
+
+            # Delete the channel
+            await channel_to_delete.delete()
+            await message.channel.send(f"🗑️ Channel '{channel_name}' has been deleted.")
 
 @client.event
 async def on_ready():
