@@ -1,23 +1,20 @@
 # FHockey
-Discord Bot for Fantasy Hockey League
+Discord Bot for my Fantasy Hockey League on Fantrax
 
 
 
 # NHL Discord Bot
 
-A Discord bot that fetches NHL team standings and player stats using the NHL API. The bot supports commands to get team points, player goals, and more. It also supports team names in both English and French, as well as team abbreviations.
+A Discord bot that fetches NHL team standings, playoff odds and player stats using the NHL API and [MoneyPuck](https://moneypuck.com/predictions.htm) and currently working on integration to Fantrax custom leagues through [Fantrax Documentation by Nathan Taggart](https://fantraxapi.kometa.wiki/en/latest/index.html). 
 
 ---
 
 ## Features
 
 - **Team Points**: Get the current season points for any NHL team using the team's English name, French name, or abbreviation.
-  - Example: `!points Toronto Maple Leafs`, `!points Maple Leafs de Toronto`, or `!points TOR`
-- **Multi-Language Support**: Works with both English and French team names.
-- **Team Abbreviations**: Supports team abbreviations (e.g., `WPG` for Winnipeg Jets).
-
-- - **Player Stats**: Get the number of goals scored by a specific player using their player ID.
-  - Example: `!goals 8475166` (Tyler Myers) (DOES NOT WORK RIGHT NOW)
+  - Example: `!standings Toronto Maple Leafs`, `!standings Maple Leafs de Toronto`, or `!standings TOR`
+- - **Player Stats**: Get the number of goals scored by a specific player using their player ID or Last name.
+  - Example: `!playerpoints 8474574` (Tyler Myers), `!playerpoints ovechkin'
 
 ---
 
@@ -30,7 +27,7 @@ A Discord bot that fetches NHL team standings and player stats using the NHL API
 3. **NHL API**: The bot uses the official NHL API to fetch data.
 
 ### Installation
-
+ This section is not up to date.
 1. Clone the repository:
    ```bash
    git clone https://github.com/your-username/your-repo-name.git
@@ -56,13 +53,36 @@ A Discord bot that fetches NHL team standings and player stats using the NHL API
 
 ## Commands
 
-- **`!points <team_name>`**: Get the current season points for the specified team.
-  - Example: `!points Toronto Maple Leafs`, `!points Jets de Winnipeg`, or `!points WPG`
+### !Test
+- **`!test`**: Check if the bot is running.
+  - Example: `!test
+
+### !Standings
+- **`!standings <query>`**
+
+#### Query Options:
+- `all` – Returns full NHL league standings sorted by points.
+- `playoffs west` or `playoffs east` – Displays the current playoff picture for the Western or Eastern Conference.
+- `<division>` – Retrieves standings for a specific division (Pacific, Central, Atlantic, Metropolitan).
+- `<conference>` – Retrieves standings for a conference (Western, Eastern).
+- `<team name or abbreviation>` – Returns the current points for a specific NHL team. Works for French and English
+
+##### Example:
+```bash
+!standings all
+```
+**Response:**
+```
+🏆 NHL League Standings:
+1. Team A - 80 pts
+2. Team B - 78 pts
+...
+```
+### !playerpoints
 - **`!goals <player_id>`**: Get the number of goals scored by the specified player.
   - Example: `!goals 8475166` (Tyler Myers) (Work in Progress)
-- **`!test`**: Check if the bot is running.
-  - Example: `!test`
 
+### !playoffodds
 ---
 
 ## Example Usage
