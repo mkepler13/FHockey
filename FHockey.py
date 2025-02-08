@@ -11,6 +11,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from datetime import datetime
+
+VERSION = "0.3.1"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -77,7 +80,8 @@ test_players_to_track = [
     {"name": "Travis Sanheim", "id": 8477948},
     {"name": "Jack Eichel", "id": 8478403},
     {"name": "Jake Walman", "id": 8478013},
-    {"name": "Darnell Nurse", "id": 8477498}
+    {"name": "Darnell Nurse", "id": 8477498},
+    {"name": "Zach Werenski", "id": 8478460}
 ]
 
 #team name dictionary
@@ -190,18 +194,28 @@ async def track_fantrax_trades():
         await asyncio.sleep(300)  # Check for new trades every 5 minutes
 
 #WEBSCRAPE
-
+# Input Handler
 def convert_team_name_to_abbreviation(team_name: str):
-    """Convert full team name (English/French) to team abbreviation."""
+    """Convert full team name (English/French) to team abbreviation.
+       If an abbreviation is provided, validate and return it."""
     team_name = team_name.strip().lower()
+    
+    # Create a set of valid abbreviations for quick lookup
+    valid_abbreviations = set(TEAM_NAME_TO_ABBREVIATION.values())
+
+    # Check if the input is already a valid abbreviation
+    if team_name.upper() in valid_abbreviations:
+        print(f"Valid abbreviation: {team_name.upper()}")
+        return team_name.upper()
+    
+    # Check for full team names
     for full_name, abbreviation in TEAM_NAME_TO_ABBREVIATION.items():
         if team_name == full_name.lower():
-            # Print out the full name and the abbreviation for debugging
             print(f"Team Name: {full_name} -> Abbreviation: {abbreviation}")
             return abbreviation
-    # If no abbreviation found, return None
-    return None
 
+    # If no match found, return None
+    return None
 
 # Scrape playoff odds from moneypuck.com
 async def get_playoff_odds(team_name=None):
@@ -424,10 +438,9 @@ async def get_player_points(player_input):
 
 #Team functions 
 
-async def get_team_points(team_name): 
-    """Fetch the current season points for a given NHL team."""
-    
-    # NHL API endpoint for team standings
+async def get_standings(query): 
+    """Fetch the current season standings for a given NHL team, division, conference, all teams, or playoff picture."""
+
     NHL_TEAM_STANDINGS_URL = "https://api-web.nhle.com/v1/standings/now"
 
     async with aiohttp.ClientSession() as session:
@@ -436,22 +449,108 @@ async def get_team_points(team_name):
                 return "Error: Unable to fetch team standings."
 
             data = await response.json()
+            standings = data.get("standings", [])
 
-            # Loop through the teams to find a match
-            for team in data["standings"]:
-                # Extract team names and abbreviation
+            if not isinstance(standings, list):  # Ensure standings is a list
+                return "Error: Unexpected data format from NHL API."
+
+            # Define NHL divisions and conferences
+            divisions = ["Pacific", "Central", "Atlantic", "Metropolitan"]
+            conference_aliases = {
+                "west": "Western",
+                "western": "Western",
+                "east": "Eastern",
+                "eastern": "Eastern"
+            }
+
+            query_lower = query.lower()
+
+            # Return all NHL teams sorted by points
+            if query_lower == "all":
+                all_teams = sorted(standings, key=lambda x: x.get("points", 0), reverse=True)
+                standings_text = "🏆 **NHL League Standings:**\n"
+                for rank, team in enumerate(all_teams, start=1):
+                    team_name = team.get("teamName", {}).get("default", "Unknown Team")
+                    team_points = team.get("points", 0)
+                    standings_text += f"{rank}. {team_name} - {team_points} pts\n"
+                return standings_text
+
+            # Playoff standings
+            if query_lower in ["playoffs west", "playoffs east"]:
+                conference_name = "Western" if "west" in query_lower else "Eastern"
+                conference_teams = [team for team in standings if team.get("conferenceName", "") == conference_name]
+                
+                # Sort teams by points
+                conference_teams.sort(key=lambda x: x.get("points", 0), reverse=True)
+
+                # Separate by divisions
+                div1, div2 = ("Pacific", "Central") if "west" in query_lower else ("Metropolitan", "Atlantic")
+                div1_teams = [team for team in conference_teams if team.get("divisionName", "") == div1][:3]
+                div2_teams = [team for team in conference_teams if team.get("divisionName", "") == div2][:3]
+
+                # Get wild card teams (next 2 best teams outside of top 3 in each division)
+                remaining_teams = [team for team in conference_teams if team not in div1_teams + div2_teams]
+                wild_card_teams = remaining_teams[:2]
+
+                # Get next 2 teams outside playoffs
+                outside_teams = remaining_teams[2:4]
+
+                # Format output
+                standings_text = f"🏆 **{conference_name} Conference Playoff Picture** 🏆\n\n"
+                standings_text += f"**{div1} Division:**\n"
+                for i, team in enumerate(div1_teams, 1):
+                    standings_text += f"{i}. {team['teamName']['default']} - {team['points']} pts\n"
+
+                standings_text += f"\n**{div2} Division:**\n"
+                for i, team in enumerate(div2_teams, 1):
+                    standings_text += f"{i}. {team['teamName']['default']} - {team['points']} pts\n"
+
+                standings_text += f"\n**Wild Card Teams:**\n"
+                for i, team in enumerate(wild_card_teams, 1):
+                    standings_text += f"WC{i}. {team['teamName']['default']} - {team['points']} pts\n"
+
+                standings_text += f"\n**Chasing the Playoffs:**\n"
+                for i, team in enumerate(outside_teams, 1):
+                    standings_text += f"{i}. {team['teamName']['default']} - {team['points']} pts\n"
+
+                return standings_text
+
+            # Check if input is a division
+            if query_lower in [d.lower() for d in divisions]:
+                division_teams = [team for team in standings if team.get("divisionName", "").lower() == query_lower]
+                if not division_teams:
+                    return f"Error: No teams found in the {query.title()} Division."
+                division_teams.sort(key=lambda x: x.get("points", 0), reverse=True)
+                standings_text = f"📊 {query.title()} Division Standings:\n"
+                for rank, team in enumerate(division_teams, start=1):
+                    standings_text += f"{rank}. {team['teamName']['default']} - {team['points']} pts\n"
+                return standings_text
+
+             # Check if input is a conference (supports "West/Western" and "East/Eastern")
+            if query_lower in conference_aliases:
+                conference_name = conference_aliases[query_lower]
+                conference_teams = [team for team in standings if team.get("conferenceName", "") == conference_name]
+                if not conference_teams:
+                    return f"Error: No teams found in the {conference_name} Conference."
+                conference_teams.sort(key=lambda x: x.get("points", 0), reverse=True)
+                standings_text = f"🌎 {conference_name} Conference Standings:\n"
+                for rank, team in enumerate(conference_teams, start=1):
+                    standings_text += f"{rank}. {team['teamName']['default']} - {team['points']} pts\n"
+                return standings_text
+
+            # If not a division or conference, assume it's a team query
+            for team in standings:
                 team_name_english = team.get("teamName", {}).get("default", "Unknown Team")
                 team_name_french = team.get("teamName", {}).get("fr", "Unknown Team")
                 team_abbrev = team.get("teamAbbrev", {}).get("default", "Unknown Team")
 
-                # Check if the user's input matches any of the team's names or abbreviation
-                if (team_name.lower() in team_name_english.lower() or
-                    team_name.lower() in team_name_french.lower() or
-                    team_name.lower() == team_abbrev.lower()):
-                    team_points = team["points"]
+                if (query_lower in team_name_english.lower() or
+                    query_lower in team_name_french.lower() or
+                    query_lower == team_abbrev.lower()):
+                    team_points = team.get("points", 0)
                     return f"🏒 {team_name_english} currently has {team_points} points this season!"
 
-            return f"Error: Team '{team_name}' not found. Please check you spelling"
+            return f"Error: Team, division, conference, or 'playoffs' keyword '{query}' not found. Please check your spelling."
 
 #Tracking Functions 
 
@@ -518,7 +617,7 @@ async def on_message(message):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID, DISCORD_TRADE_CHANNEL_ID]  # Check if the message is in one of the allowed channels
         if message.channel.id not in allowed_channels:
             return
-        await message.channel.send("I am alive and listening!")
+        await message.channel.send("I am alive and listening!" + " Version: " + VERSION)
 
     if content_lower.startswith("!standings"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
@@ -526,11 +625,17 @@ async def on_message(message):
             return
         parts = message.content.split(maxsplit=1)
         if len(parts) != 2:
-            await message.channel.send("Usage: `!standings <team_name>`")
+            await message.channel.send("**🏒 Available `!standings` Commands:**\n"
+                    "`!standings all` - Shows full NHL standings\n"
+                    "`!standings <team name>` - Shows a specific team's points (e.g., `!standings bruins`)\n"
+                    "`!standings <division>` - Shows a division's standings (e.g., `!standings pacific`)\n"
+                    "`!standings <conference>` - Shows a conference's standings (e.g., `!standings western`)\n"
+                    "`!standings Playoffs west` - Shows the Western Conference playoff picture\n"
+                    "`!standings Playoffs east` - Shows the Eastern Conference playoff picture\n")
             return
 
         team_name = parts[1]
-        result = await get_team_points(team_name)
+        result = await get_standings(team_name)
         await message.channel.send(result)
 
     if content_lower.startswith("!playerpoints"):
@@ -583,7 +688,7 @@ async def on_message(message):
     # Admin Override Commands (Add & Delete Channel)
     if ADMIN_OVERRIDE:
         if content_lower.startswith("!addchannel"):
-            allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Restrict command usage to specific channels
+            allowed_channels = [DISCORD_INFO_CHANNEL_ID]  # Restrict command usage to specific channels
             if message.channel.id not in allowed_channels:
                 return
 
@@ -606,7 +711,7 @@ async def on_message(message):
             await message.channel.send(f"✅ Channel '{new_channel.name}' has been created!")
 
         if content_lower.startswith("!deletechannel"):
-            allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Restrict command usage to specific channels
+            allowed_channels = [DISCORD_INFO_CHANNEL_ID]  # Restrict command usage to specific channels
             if message.channel.id not in allowed_channels:
                 return
 
