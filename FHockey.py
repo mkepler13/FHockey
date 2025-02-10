@@ -13,7 +13,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime
 
-VERSION = "0.3.1"
+VERSION = "0.3.4"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -121,7 +121,13 @@ TEAM_NAME_TO_ABBREVIATION = {
 }
 
 # API YEAR
-NHL_YEAR = "20242025"
+async def get_current_season():
+    """Dynamically determine the current NHL season."""
+    now = datetime.datetime.now()
+    year = now.year
+    if now.month < 7:  # NHL season starts in October and ends around June
+        return f"{year - 1}{year}"
+    return f"{year}{year + 1}"
 
 #FANTRAX
 
@@ -345,6 +351,18 @@ async def search_players_by_last_name(last_name):
 
 
 
+async def fetch_player_stats(player_id):
+    """Fetch player statistics from the NHL API."""
+    NHL_PLAYER_STATS_URL = f"https://api.nhle.com/stats/rest/en/skater/summary?cayenneExp=playerId={player_id}"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(NHL_PLAYER_STATS_URL) as response:
+            if response.status != 200:
+                return None, "Error: Unable to fetch player stats."
+            
+            data = await response.json()
+            return data.get("data", []), None
+
 async def get_player_points(player_input):
     """Fetch a player's total points (goals + assists) from the NHL API."""
     
@@ -364,13 +382,14 @@ async def get_player_points(player_input):
                     return "Error: Unable to fetch player stats."
 
                 data = await response.json()
+                print(data)
 
                 # Check if stats exist
                 if not data['data']:
                     return f"🏒 {player_name} has not recorded any stats this season."
 
                 # Filter stats for the current season
-                current_season = "20242025"  # Update this for the current season
+                current_season = "NHL_YEAR"  # Update this for the current season
                 current_season_stats = None
                 for stats in data['data']:
                     if stats['seasonId'] == int(current_season):
@@ -435,6 +454,51 @@ async def get_player_points(player_input):
                         return f"🏒 {player_name} has {points} points ({goals} goals + {assists} assists) this season!"
                     except KeyError:
                         return "Error: Could not retrieve player stats."
+
+async def process_player_stats(player_id, player_name):
+    """Retrieve and process a player's statistics for the current season."""
+    stats_data, error = await fetch_player_stats(player_id)
+    if error:
+        return error
+
+    if not stats_data:
+        return f"🏒 {player_name} has not recorded any stats this season."
+
+    current_season = await get_current_season()
+    current_season_stats = next((stats for stats in stats_data if str(stats["seasonId"]) == current_season), None)
+
+    if not current_season_stats:
+        return f"🏒 {player_name} has not recorded any stats this season."
+
+    goals = current_season_stats.get("goals", 0)
+    assists = current_season_stats.get("assists", 0)
+    points = goals + assists
+
+    return f"🏒 {player_name} has {points} points ({goals} goals + {assists} assists) this season!"
+
+async def get_player_points_new(player_input):
+    """Fetch a player's total points (goals + assists) from the NHL API."""
+    
+    if player_input.isdigit():  # Player ID input
+        player_id = int(player_input)
+        player_name = await get_player_info(player_id)
+        if not player_name:
+            return f"Error: Player ID {player_id} not found."
+
+        return await process_player_stats(player_id, player_name)
+
+    # If input is a last name, search for matching players
+    players = await search_players_by_last_name(player_input)
+    if isinstance(players, str):  # Error message case
+        return players
+
+    if len(players) > 1:  # Multiple matches, prompt for ID
+        return "Multiple players found. Please specify by ID:\n" + "\n".join(
+            [f"- {full_name} (ID: {player_id})" for player_id, full_name in players]
+        )
+
+    player_id, player_name = players[0]
+    return await process_player_stats(player_id, player_name)
 
 #Team functions 
 
