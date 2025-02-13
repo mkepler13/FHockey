@@ -13,7 +13,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -54,7 +54,7 @@ client = discord.Client(intents=intents)
 # NHL API Endpoints
 NHL_STATS_URL = "https://api.nhle.com/stats/rest/en/skater/summary?cayenneExp=playerId={}"
 NHL_PLAYER_INFO_URL = "https://api-web.nhle.com/v1/player/{}/landing"
-NHL_PLAYER_SEARCH_URL = "https://api-web.nhle.com/v1/search/player?q={}"
+
 
 ADMIN_OVERRIDE = False  # Set this to True to allow add/delete channel commands
 
@@ -121,9 +121,9 @@ TEAM_NAME_TO_ABBREVIATION = {
 }
 
 # API YEAR
-async def get_current_season():
+def get_current_season():
     """Dynamically determine the current NHL season."""
-    now = datetime.datetime.now()
+    now = datetime.now()
     year = now.year
     if now.month < 7:  # NHL season starts in October and ends around June
         return f"{year - 1}{year}"
@@ -365,6 +365,8 @@ async def fetch_player_stats(player_id):
 
 async def get_player_points(player_input):
     """Fetch a player's total points (goals + assists) from the NHL API."""
+
+    NHL_YEAR = get_current_season()  # Fetch the current season dynamical
     
     # Check if the input is a player ID (numeric)
     if player_input.isdigit():
@@ -622,6 +624,8 @@ async def track_player_events(player_id, channel, player_name):
     """Track a player's goals and goals against in real-time."""
     last_goals = None
     last_goals_against = None
+
+    NHL_YEAR = get_current_season()  # Fetch the current season dynamical
 
     while True:
         try:
