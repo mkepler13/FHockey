@@ -1,4 +1,5 @@
 import discord
+from discord.ext import commands
 import aiohttp
 import asyncio
 import os
@@ -12,6 +13,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime
+import difflib
 
 VERSION = "0.3.5"
 
@@ -51,9 +53,13 @@ intents.message_content = True  # Required to read message content
 
 client = discord.Client(intents=intents)
 
+intents = discord.Intents.default()  # Or use discord.Intents.all() if needed
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 # NHL API Endpoints
 NHL_STATS_URL = "https://api.nhle.com/stats/rest/en/skater/summary?cayenneExp=playerId={}"
 NHL_PLAYER_INFO_URL = "https://api-web.nhle.com/v1/player/{}/landing"
+NHL_Hits = "https://api.nhle.com/stats/rest/en/skater/realtime?limit=-1&cayenneExp=seasonId={}%20and%20gameTypeId=2%20and%20playerId={}"
 
 
 ADMIN_OVERRIDE = False  # Set this to True to allow add/delete channel commands
@@ -348,8 +354,6 @@ async def search_players_by_last_name(last_name):
                 return "Error: No players found in the API response."
 
             return players
-
-
 
 async def fetch_player_stats(player_id):
     """Fetch player statistics from the NHL API."""
@@ -674,12 +678,10 @@ async def track_player_events(player_id, channel, player_name):
 
 @client.event
 async def on_message(message):
-    """Respond to the user's message with player stats."""
-    if message.author == client.user:
+    if message.author == client.user: #ignore if message is from bot
         return
 
-    # Convert the message content to lowercase for case-insensitive comparison
-    content_lower = message.content.lower()
+    content_lower = message.content.lower() # Convert the message content to lowercase for case-insensitive comparison
 
     if content_lower.startswith("!test"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID, DISCORD_TRADE_CHANNEL_ID]  # Check if the message is in one of the allowed channels
@@ -751,7 +753,9 @@ async def on_message(message):
     # Shitpost messages
     if content_lower.startswith("!freepetey"):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
-        # Add Channel Command
+
+    if content_lower.startswith("!quack"):
+        await message.channel.send("https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsneak-peak-of-ne-anaheim-ducks-logo-v0-6eugvzi3z57d1.jpeg%3Fauto%3Dwebp%26s%3D0ebf31d88d0cbd4d591698c02f145a042e815799") # source https://www.instagram.com/p/C8Uw5IRB48x/
 
     # Admin Override Commands (Add & Delete Channel)
     if ADMIN_OVERRIDE:
