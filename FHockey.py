@@ -1,21 +1,23 @@
 import discord
 from discord.ext import commands
-import aiohttp
-import asyncio
-import os
-import logging
-from dotenv import load_dotenv
+import aiohttp # Import aiohttp for asynchronous HTTP requests
+import asyncio  # Import asyncio for handling asynchronous operations
+import os # Import os for interacting with the operating system
+import logging  # Import logging for logging messages to console
+from dotenv import load_dotenv # Import load_dotenv from dotenv for loading environment variables
 from bs4 import BeautifulSoup  # Import BeautifulSoup for scraping
 import requests  # Import requests for HTTP requests
-from selenium import webdriver
+from selenium import webdriver # Import webdriver for browser automation
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from datetime import datetime
-import difflib
+from datetime import datetime # Import datetime for date/time manipulation
+import difflib  # Import difflib for string matching
+import urllib.parse # Import urllib for URL parsing
+import io # Import io for handling file-like 
 
-VERSION = "0.3.5"
+VERSION = "0.3.8"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -87,7 +89,32 @@ test_players_to_track = [
     {"name": "Jack Eichel", "id": 8478403},
     {"name": "Jake Walman", "id": 8478013},
     {"name": "Darnell Nurse", "id": 8477498},
-    {"name": "Zach Werenski", "id": 8478460}
+    {"name": "Zach Werenski", "id": 8478460},
+    {"name": "Mark Stone", "id": 8475913},
+    {"name": "Eeli Tolvanen", "id": 8480009},
+    {"name": "Connor Garland", "id": 8478856},
+    {"name": "Alex Tuch", "id": 8477949},
+    {"name": "Cole Caufield", "id": 8481540},
+    {"name": "Jack Hughes", "id": 8481559},
+    {"name": "Tage Thompson", "id": 8479420},
+    {"name": "Juraj Slafkovsky", "id": 8483515},
+    {"name": "Dylan Larkin", "id": 8477946},
+    {"name": "Willius Nylander", "id": 8477939},
+    {"name": "Maitch Marner", "id": 8478483},
+    {"name": "Tom Wilson", "id": 8476880},
+    {"name": "Mikael Granlund", "id": 8475798},
+    {"name": "Nathan MacKinnon", "id": 8477492},
+    {"name": "Leon Draisaitl", "id": 8477934},
+    {"name": "Brad Marchand", "id": 8473419},
+    {"name": "Brock Boeser", "id": 8478444},
+    {"name": "Jacob Trouba", "id": 8476885},
+    {"name": "Aleksander Barkov", "id": 8477493},
+    {"name": "Sidney Crosby", "id": 8471675},
+    {"name": "Steven Stamkos", "id": 8474564},
+    {"name": "Alex DeBrincat", "id": 8479337},
+    {"name": "Shane Wright", "id": 8483524},
+    {"name": "Matty Beniers", "id": 8482665},
+    {"name": "Adam \"@Foxyclean\" Fox", "id": 8479323}
 ]
 
 #team name dictionary
@@ -395,7 +422,7 @@ async def get_player_points(player_input):
                     return f"🏒 {player_name} has not recorded any stats this season."
 
                 # Filter stats for the current season
-                current_season = "NHL_YEAR"  # Update this for the current season
+                current_season = NHL_YEAR  # Update this for the current season
                 current_season_stats = None
                 for stats in data['data']:
                     if stats['seasonId'] == int(current_season):
@@ -674,6 +701,42 @@ async def track_player_events(player_id, channel, player_name):
             logging.error(f"Error tracking player {player_name} (ID: {player_id}): {e}")
             await asyncio.sleep(60)
 
+# Image downloading 
+async def send_embedded_image(channel, image_url):
+    """
+    Downloads an image from a given URL and sends it as an embedded image in Discord.
+    Supports direct image URLs and Reddit media redirect URLs.
+    """
+    # Extract actual image URL if it's a Reddit media redirect
+    parsed_url = urllib.parse.urlparse(image_url)
+    if parsed_url.netloc == "www.reddit.com" and "url=" in parsed_url.query:
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        image_url = query_params.get("url", [None])[0]  # Extract the real URL
+    
+    if not image_url:
+        return await channel.send("Invalid image URL.")
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    return await channel.send("Failed to download image. URL might be broken.")
+
+                content_type = resp.headers.get("Content-Type", "")
+                if not content_type.startswith("image/"):
+                    return await channel.send("The URL does not point to a valid image.")
+
+                data = io.BytesIO(await resp.read())  # Read image into memory
+                filename = "image." + content_type.split("/")[-1]  # Determine file extension
+                file = discord.File(data, filename=filename)
+
+                await channel.send(file=file)  # Send only the file (no embed)
+        except aiohttp.ClientError:
+            await channel.send("Unable to retrieve the image. The URL might be incorrect.")
+
+
+
+
 #Reading Functions 
 
 @client.event
@@ -755,7 +818,13 @@ async def on_message(message):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
 
     if content_lower.startswith("!quack"):
-        await message.channel.send("https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsneak-peak-of-ne-anaheim-ducks-logo-v0-6eugvzi3z57d1.jpeg%3Fauto%3Dwebp%26s%3D0ebf31d88d0cbd4d591698c02f145a042e815799") # source https://www.instagram.com/p/C8Uw5IRB48x/
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsneak-peak-of-ne-anaheim-ducks-logo-v0-6eugvzi3z57d1.jpeg%3Fauto%3Dwebp%26s%3D0ebf31d88d0cbd4d591698c02f145a042e815799") 
+
+    if content_lower.startswith("!canada"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fjustin-trudeau-you-cant-take-our-country-and-you-cant-take-v0-3aa23x5b8fke1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D5946f29f18e5c6e235f8d28522c61bbbda84378a")
+
+    if content_lower.startswith("!firegreg"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fday-of-adding-things-to-a-picture-of-greg-cronin-until-he-v0-cakncid1mlke1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D680104298177be562dc0bb6418f38ec2f4da8ef5")
 
     # Admin Override Commands (Add & Delete Channel)
     if ADMIN_OVERRIDE:
