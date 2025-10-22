@@ -39,14 +39,20 @@ A Discord bot that fetches NHL team standings, playoff odds and player stats usi
    pip install -r requirements.txt
    ```
 
-3. Create a `.env` file in the project root and add your Discord bot token:
+3. Create a `.env` file in the project root and add your Discord bot token and channels as well as Fantrax information if using:
    ```env
    DISCORD_BOT_TOKEN=your-discord-bot-token-here
+   DISCORD_BOTSPAM_CHANNEL_ID=your-discord-channel-id-here
+   DISCORD_TRADE_CHANNEL_ID=your-discord-channel-id-here
+   DISCORD_INFO_CHANNEL_ID=your-discord-channel-id-here
+   FANTRAX_USERNAME=your-username-here
+   FANTRAX_PASSWORD=your-password-here
+   FANTRAX_LEAGUE_ID=your-league-id-here
    ```
 
 4. Run the bot:
    ```bash
-   python your-bot-script-name.py
+   FHockey.bat
    ```
 
 ---
