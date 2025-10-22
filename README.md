@@ -5,7 +5,7 @@ Discord Bot for my Fantasy Hockey League on Fantrax
 
 # NHL Discord Bot
 
-A Discord bot that fetches NHL team standings, playoff odds and player stats using the NHL API and [MoneyPuck](https://moneypuck.com/predictions.htm) and currently working on integration to Fantrax custom leagues through [Fantrax Documentation by Nathan Taggart](https://fantraxapi.kometa.wiki/en/latest/index.html). 
+A Discord bot that fetches NHL team standings, playoff odds and player stats using the NHL API and [MoneyPuck](https://moneypuck.com/predictions.htm) and currently working on integration to Fantrax custom leagues through [Fantrax Documentation by meisnate12](https://fantraxapi.kometa.wiki/en/latest/index.html). 
 
 ---
 
