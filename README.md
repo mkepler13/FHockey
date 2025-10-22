@@ -61,7 +61,12 @@ A Discord bot that fetches NHL team standings, playoff odds and player stats usi
 
 ### !Test
 - **`!test`**: Check if the bot is running and give the version number
-  - Example: `!test
+  #### Example Usage
+
+   ```
+   User: !Test
+   Bot: I am alive and listening! Version: 0.4.0
+   ```
 
 ### !Standings
 - **`!standings <query>`**
@@ -71,14 +76,13 @@ A Discord bot that fetches NHL team standings, playoff odds and player stats usi
 - `playoffs west` or `playoffs east` – Displays the current playoff picture for the Western or Eastern Conference.
 - `<division>` – Retrieves standings for a specific division (Pacific, Central, Atlantic, Metropolitan).
 - `<conference>` – Retrieves standings for a conference (Western, Eastern).
-- `<team name or abbreviation>` – Returns the current points for a specific NHL team. Works for French and English
+- `<team name or abbreviation>` – Returns the current points for a specific NHL team. See Accepted Names Table at end of README.
 
 ##### Example:
-```bash
-!standings all
 ```
-**Response:**
-```
+User: !standings all
+
+Bot:
 🏆 NHL League Standings:
 1. Team A - 80 pts
 2. Team B - 78 pts
@@ -89,6 +93,38 @@ A Discord bot that fetches NHL team standings, playoff odds and player stats usi
   - Example: `!goals 8475166` (Tyler Myers) (Work in Progress)
 
 ### !playoffodds
+- **`!playoffodds <query>`**
+#### Query Options:
+- `<team name or abbreviation>` – Returns the current points for a specific NHL team. See Accepted Names Table at end of README.
+
+  ##### Example:
+```
+User: !playoffodds Flames
+
+Bot:
+Playoff odds for CGY: 9.4%
+```
+----
+### Meme commands
+-***!freepetey***
+
+-***!quack***
+
+-***!Canada***
+
+-***!Firegreg***
+
+-***!FireQ***
+
+-***!Petey***
+
+-***!Bracket***
+
+
+-***!gang***  ***{insert text}***
+
+-***!playoff***
+
 ---
 
 ## Example Usage
@@ -108,8 +144,46 @@ A Discord bot that fetches NHL team standings, playoff odds and player stats usi
 3. **Test Command**:
    ```
    User: !test
-   Bot: I am alive and listening!
+   Bot: I am alive and listening! Version: 0.4.0
    ```
+
+---
+## Abbreviations Table
+
+| Abbreviation | Team Name / Variations |
+|-------------|----------------------|
+| ANA         | Anaheim Ducks, Ducks d'Anaheim, Ducks, Anaheim |
+| BOS         | Boston Bruins, Bruins de Boston, Bruins, Boston |
+| BUF         | Buffalo Sabres, Sabres de Buffalo, Sabres, Buffalo |
+| CGY         | Calgary Flames, Flames de Calgary, Calgary, Flames |
+| CAR         | Carolina Hurricanes, Hurricanes de la Caroline, Carolina, Hurricanes, Canes |
+| CHI         | Chicago Blackhawks, Blackhawks de Chicago, Blackhawks, Chicago, Hawks |
+| COL         | Colorado Avalanche, Avalanche du Colorado, Colorado, Avalanche, Avs |
+| CBJ         | Columbus Blue Jackets, Blue Jackets de Columbus, Columbus, Blue Jackets, Jackets |
+| DAL         | Dallas Stars, Stars de Dallas, Dallas, Stars |
+| DET         | Detroit Red Wings, Red Wings de Détroit, Detroit, Red Wings, Wings |
+| EDM         | Edmonton Oilers, Oilers d'Edmonton, Edmonton, Oilers |
+| FLA         | Florida Panthers, Panthers de la Floride, Florida, Panthers, Cats |
+| LAK         | Los Angeles Kings, Kings de Los Angeles, Los Angeles, Kings |
+| MIN         | Minnesota Wild, Wild du Minnesota, Minnesota, Wild |
+| MTL         | Montreal Canadiens, Canadiens de Montréal, Montreal, Canadiens, Habs |
+| NSH         | Nashville Predators, Predators de Nashville, Nashville, Predators, Preds |
+| NJD         | New Jersey Devils, Devils du New Jersey, New Jersey, Devils |
+| NYI         | New York Islanders, Islanders de New York, Islanders, Isls |
+| NYR         | New York Rangers, Rangers de New York, Rangers, Rags |
+| OTT         | Ottawa Senators, Senateurs d'Ottawa, Ottawa, Senators, Sens |
+| PHI         | Philadelphia Flyers, Flyers de Philadelphie, Philadelphia, Flyers |
+| PIT         | Pittsburgh Penguins, Penguins de Pittsburgh, Pittsburgh, Penguins |
+| SJS         | San Jose Sharks, Sharks de San Jose, San Jose, Sharks |
+| SEA         | Seattle Kraken, Kraken de Seattle, Seattle |
+| STL         | St. Louis Blues, Blues de Saint-Louis, St. Louis, Blues |
+| TBL         | Tampa Bay Lightning, Lightning de Tampa Bay, Tampa Bay, Lightning, Bolts |
+| TOR         | Toronto Maple Leafs, Maple Leafs de Toronto, Toronto, Maple Leafs, Leafs |
+| UTA         | Utah Mammoth, Mammoth de l'Utah, Utah, Mammoth |
+| VAN         | Vancouver Canucks, Canucks de Vancouver, Vancouver, Canucks, Nucks |
+| VGK         | Vegas Golden Knights, Golden Knights de Vegas, Vegas, Golden Knights, Knights |
+| WSH         | Washington Capitals, Capitals de Washington, Washington, Capitals, Caps |
+| WPG         | Winnipeg Jets, Jets de Winnipeg, Jets, Winnipeg |
 
 ---
 
