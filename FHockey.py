@@ -29,9 +29,6 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_BOTSPAM_CHANNEL_ID = int(os.getenv("DISCORD_BOTSPAM_CHANNEL_ID", "0"))
 DISCORD_TRADE_CHANNEL_ID = int(os.getenv("DISCORD_TRADE_CHANNEL_ID", "0"))
 DISCORD_INFO_CHANNEL_ID = int(os.getenv("DISCORD_INFO_CHANNEL_ID", "0"))
-FANTRAX_USERNAME = os.getenv("FANTRAX_USERNAME")
-FANTRAX_PASSWORD = os.getenv("FANTRAX_PASSWORD")
-FANTRAX_LEAGUE_ID = os.getenv("FANTRAX_LEAGUE_ID")
 CSRF_TOKEN = "YOUR_CSRF_TOKEN"
 
 # Check if the token is found
@@ -44,11 +41,23 @@ if DISCORD_TRADE_CHANNEL_ID is None:
 if DISCORD_INFO_CHANNEL_ID is None:
     raise ValueError("No DISCORD_INFO_CHANNEL_ID found in .env file.")
 
-# Check Fantrax credentials and set flag
-FANTRAX_ENABLED = True
-if not FANTRAX_USERNAME or not FANTRAX_PASSWORD or not FANTRAX_LEAGUE_ID:
-    print("Warning: Missing Fantrax credentials. Fantrax integration will be disabled.")
-    FANTRAX_ENABLED = False
+# === Fantrax API health check (runs once at startup) ===
+FANTRAX_API = "http://localhost:8000"
+FANTRAX_ENABLED = False
+
+print("Checking Fantrax API status...")
+
+try:
+    resp = requests.get(f"{FANTRAX_API}/status", timeout=5)
+    if resp.status_code == 200 and resp.json().get("login_success", False):
+        FANTRAX_ENABLED = True
+        print("Fantrax service is online and logged in.")
+    else:
+        print("Fantrax API reachable but not logged in.")
+except Exception as e:
+    print(f"Could not contact Fantrax API: {e}")
+
+print(f"FANTRAX_ENABLED = {FANTRAX_ENABLED}")
 
 # Discord bot setup
 intents = discord.Intents.default()
@@ -130,19 +139,19 @@ TEAM_NAME_TO_ABBREVIATION = {
     "Buffalo Sabres": "BUF", "Sabres de Buffalo": "BUF","Sabres": "BUF", "Buffalo": "BUF",
     "Calgary Flames": "CGY", "Flames de Calgary": "CGY", "Calgary": "CGY", "Flames": "CGY",
     "Carolina Hurricanes": "CAR", "Hurricanes de la Caroline": "CAR", "Carolina": "CAR", "Hurricanes": "CAR", "Canes": "CAR",
-    "Chicago Blackhawks": "CHI", "Blackhawks de Chicago": "CHI", "Blackhawks": "CHI", "Chicago": "CHI",
+    "Chicago Blackhawks": "CHI", "Blackhawks de Chicago": "CHI", "Blackhawks": "CHI", "Chicago": "CHI", "Hawks": "CHI",
     "Colorado Avalanche": "COL", "Avalanche du Colorado": "COL", "Colorado": "COL", "Avalanche": "COL", "Avs": "COL",
     "Columbus Blue Jackets": "CBJ", "Blue Jackets de Columbus": "CBJ", "Columbus": "CBJ", "Blue Jackets": "CBJ", "Jackets": "CBJ",
     "Dallas Stars": "DAL", "Stars de Dallas": "DAL", "Dallas": "DAL", "Stars": "DAL",
     "Detroit Red Wings": "DET", "Red Wings de Détroit": "DET", "Detroit": "DET", "Red Wings": "DET", "Wings": "DET",
     "Edmonton Oilers": "EDM", "Oilers d'Edmonton": "EDM", "Edmonton": "EDM", "Oilers": "EDM",
-    "Florida Panthers": "FLA", "Panthers de la Floride": "FLA", "Florida": "FLA", "Panthers": "FLA",
+    "Florida Panthers": "FLA", "Panthers de la Floride": "FLA", "Florida": "FLA", "Panthers": "FLA", "Cats": "FLA",
     "Los Angeles Kings": "LAK", "Kings de Los Angeles": "LAK", "Los Angeles": "LAK", "Kings": "LAK",
     "Minnesota Wild": "MIN", "Wild du Minnesota": "MIN", "Minnesota": "MIN", "Wild": "MIN",
     "Montreal Canadiens": "MTL", "Canadiens de Montréal": "MTL", "Montreal": "MTL", "Canadiens": "MTL", "Habs": "MTL",
     "Nashville Predators": "NSH", "Predators de Nashville": "NSH", "Nashville": "NSH", "Predators": "NSH", "Preds": "NSH",
     "New Jersey Devils": "NJD", "Devils du New Jersey": "NJD", "New Jersey": "NJD", "Devils": "NJD",
-    "New York Islanders": "NYI", "Islanders de New York": "NYI","Islanders": "NYI",
+    "New York Islanders": "NYI", "Islanders de New York": "NYI","Islanders": "NYI", "Isls": "NYI",
     "New York Rangers": "NYR", "Rangers de New York": "NYR", "Rangers": "NYR", "Rags": "NYR",
     "Ottawa Senators": "OTT", "Senateurs d'Ottawa": "OTT", "Ottawa": "OTT", "Senators": "OTT", "Sens": "OTT",
     "Philadelphia Flyers": "PHI", "Flyers de Philadelphie": "PHI", "Philadelphia": "PHI", "Flyers": "PHI",
@@ -151,13 +160,22 @@ TEAM_NAME_TO_ABBREVIATION = {
     "Seattle Kraken": "SEA", "Kraken de Seattle": "SEA", "Seattle": "SEA", "Seattle": "SEA",
     "St. Louis Blues": "STL", "Blues de Saint-Louis": "STL", "St. Louis": "STL", "Blues": "STL",
     "Tampa Bay Lightning": "TBL", "Lightning de Tampa Bay": "TBL", "Tampa Bay": "TBL", "Lightning": "TBL", "Bolts": "TBL",
-    "Toronto Maple Leafs": "TOR", "Maple Leafs de Toronto": "TOR", "Toronto": "TOR", "Maple Leafs": "TOR",
+    "Toronto Maple Leafs": "TOR", "Maple Leafs de Toronto": "TOR", "Toronto": "TOR", "Maple Leafs": "TOR", "Leafs": "TOR",
     "Utah Mammoth": "UTA", "Mammoth de l'Utah": "UTA", "Utah": "UTA", "Mammoth": "UTA",
     "Vancouver Canucks": "VAN", "Canucks de Vancouver": "VAN", "Vancouver": "VAN", "Canucks": "VAN", "Nucks": "VAN",
-    "Vegas Golden Knights": "VGK", "Golden Knights de Vegas": "VGK", "Vegas": "VGK", "Golden Knights": "VGK",
+    "Vegas Golden Knights": "VGK", "Golden Knights de Vegas": "VGK", "Vegas": "VGK", "Golden Knights": "VGK", "Knights": "VGK",
     "Washington Capitals": "WSH", "Capitals de Washington": "WSH", "Washington": "WSH", "Capitals": "WSH", "Caps": "WSH",
     "Winnipeg Jets": "WPG", "Jets de Winnipeg": "WPG", "Jets": "WPG", "Winnipeg": "WPG",
 }
+
+#check if fantrax script is working
+def check_fantrax_status():
+    try:
+        resp = requests.get(f"{FANTRAX_API}/status").json()
+        return resp.get("login_success", False)
+    except Exception as e:
+        print("Error contacting Fantrax service:", e)
+        return False
 
 # API YEAR
 def get_current_season():
@@ -896,10 +914,11 @@ async def on_ready():
     # Start tracking all players
     for player in test_players_to_track:
         client.loop.create_task(track_player_events(player["id"], channel, player["name"]))
-
+        
      # Start tracking Fantrax trades only if Fantrax is enabled
     if FANTRAX_ENABLED:
-        client.loop.create_task(track_fantrax_trades())  # Start Fantrax trade tracking
+        return
+        #client.loop.create_task(track_fantrax_trades())  # Start Fantrax trade tracking
     else:
         print("Fantrax integration is disabled.")
 
