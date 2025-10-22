@@ -16,8 +16,10 @@ from datetime import datetime # Import datetime for date/time manipulation
 import difflib  # Import difflib for string matching
 import urllib.parse # Import urllib for URL parsing
 import io # Import io for handling file-like 
+import random
+from fastapi import FastAPI
 
-VERSION = "0.3.8"
+VERSION = "0.4.0"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -30,6 +32,7 @@ DISCORD_INFO_CHANNEL_ID = int(os.getenv("DISCORD_INFO_CHANNEL_ID", "0"))
 FANTRAX_USERNAME = os.getenv("FANTRAX_USERNAME")
 FANTRAX_PASSWORD = os.getenv("FANTRAX_PASSWORD")
 FANTRAX_LEAGUE_ID = os.getenv("FANTRAX_LEAGUE_ID")
+CSRF_TOKEN = "YOUR_CSRF_TOKEN"
 
 # Check if the token is found
 if TOKEN is None:
@@ -63,6 +66,9 @@ NHL_STATS_URL = "https://api.nhle.com/stats/rest/en/skater/summary?cayenneExp=pl
 NHL_PLAYER_INFO_URL = "https://api-web.nhle.com/v1/player/{}/landing"
 NHL_Hits = "https://api.nhle.com/stats/rest/en/skater/realtime?limit=-1&cayenneExp=seasonId={}%20and%20gameTypeId=2%20and%20playerId={}"
 
+# Other API Endpoints
+IASIP_API_URL = "https://iasip.app/api/title/"
+DEFAULT_CSRF_URL = "https://iasip.app"
 
 ADMIN_OVERRIDE = False  # Set this to True to allow add/delete channel commands
 
@@ -119,38 +125,38 @@ test_players_to_track = [
 
 #team name dictionary
 TEAM_NAME_TO_ABBREVIATION = {
-    "Anaheim Ducks": "ANA", "Ducks d'Anaheim": "ANA",
-    "Arizona Coyotes": "ARI", "Coyotes de l'Arizona": "ARI",
-    "Boston Bruins": "BOS", "Bruins de Boston": "BOS",
-    "Buffalo Sabres": "BUF", "Sabres de Buffalo": "BUF",
-    "Calgary Flames": "CGY", "Flames de Calgary": "CGY",
-    "Carolina Hurricanes": "CAR", "Hurricanes de la Caroline": "CAR",
-    "Chicago Blackhawks": "CHI", "Blackhawks de Chicago": "CHI",
-    "Colorado Avalanche": "COL", "Avalanche du Colorado": "COL",
-    "Columbus Blue Jackets": "CBJ", "Blue Jackets de Columbus": "CBJ",
-    "Dallas Stars": "DAL", "Stars de Dallas": "DAL",
-    "Detroit Red Wings": "DET", "Red Wings de Détroit": "DET",
-    "Edmonton Oilers": "EDM", "Oilers d'Edmonton": "EDM",
-    "Florida Panthers": "FLA", "Panthers de la Floride": "FLA",
-    "Los Angeles Kings": "LAK", "Kings de Los Angeles": "LAK",
-    "Minnesota Wild": "MIN", "Wild du Minnesota": "MIN",
-    "Montreal Canadiens": "MTL", "Canadiens de Montréal": "MTL",
-    "Nashville Predators": "NSH", "Predators de Nashville": "NSH",
-    "New Jersey Devils": "NJD", "Devils du New Jersey": "NJD",
-    "New York Islanders": "NYI", "Islanders de New York": "NYI",
-    "New York Rangers": "NYR", "Rangers de New York": "NYR",
-    "Ottawa Senators": "OTT", "Senateurs d'Ottawa": "OTT",
-    "Philadelphia Flyers": "PHI", "Flyers de Philadelphie": "PHI",
-    "Pittsburgh Penguins": "PIT", "Penguins de Pittsburgh": "PIT",
-    "San Jose Sharks": "SJS", "Sharks de San Jose": "SJS",
-    "Seattle Kraken": "SEA", "Kraken de Seattle": "SEA",
-    "St. Louis Blues": "STL", "Blues de Saint-Louis": "STL",
-    "Tampa Bay Lightning": "TBL", "Lightning de Tampa Bay": "TBL",
-    "Toronto Maple Leafs": "TOR", "Maple Leafs de Toronto": "TOR",
-    "Vancouver Canucks": "VAN", "Canucks de Vancouver": "VAN",
-    "Vegas Golden Knights": "VGK", "Golden Knights de Vegas": "VGK",
-    "Washington Capitals": "WSH", "Capitals de Washington": "WSH",
-    "Winnipeg Jets": "WPG", "Jets de Winnipeg": "WPG",
+    "Anaheim Ducks": "ANA", "Ducks d'Anaheim": "ANA", "Ducks": "ANA", "Anaheim": "ANA",
+    "Boston Bruins": "BOS", "Bruins de Boston": "BOS", "Bruins": "BOS", "Boston": "BOS",
+    "Buffalo Sabres": "BUF", "Sabres de Buffalo": "BUF","Sabres": "BUF", "Buffalo": "BUF",
+    "Calgary Flames": "CGY", "Flames de Calgary": "CGY", "Calgary": "CGY", "Flames": "CGY",
+    "Carolina Hurricanes": "CAR", "Hurricanes de la Caroline": "CAR", "Carolina": "CAR", "Hurricanes": "CAR", "Canes": "CAR",
+    "Chicago Blackhawks": "CHI", "Blackhawks de Chicago": "CHI", "Blackhawks": "CHI", "Chicago": "CHI",
+    "Colorado Avalanche": "COL", "Avalanche du Colorado": "COL", "Colorado": "COL", "Avalanche": "COL", "Avs": "COL",
+    "Columbus Blue Jackets": "CBJ", "Blue Jackets de Columbus": "CBJ", "Columbus": "CBJ", "Blue Jackets": "CBJ", "Jackets": "CBJ",
+    "Dallas Stars": "DAL", "Stars de Dallas": "DAL", "Dallas": "DAL", "Stars": "DAL",
+    "Detroit Red Wings": "DET", "Red Wings de Détroit": "DET", "Detroit": "DET", "Red Wings": "DET", "Wings": "DET",
+    "Edmonton Oilers": "EDM", "Oilers d'Edmonton": "EDM", "Edmonton": "EDM", "Oilers": "EDM",
+    "Florida Panthers": "FLA", "Panthers de la Floride": "FLA", "Florida": "FLA", "Panthers": "FLA",
+    "Los Angeles Kings": "LAK", "Kings de Los Angeles": "LAK", "Los Angeles": "LAK", "Kings": "LAK",
+    "Minnesota Wild": "MIN", "Wild du Minnesota": "MIN", "Minnesota": "MIN", "Wild": "MIN",
+    "Montreal Canadiens": "MTL", "Canadiens de Montréal": "MTL", "Montreal": "MTL", "Canadiens": "MTL", "Habs": "MTL",
+    "Nashville Predators": "NSH", "Predators de Nashville": "NSH", "Nashville": "NSH", "Predators": "NSH", "Preds": "NSH",
+    "New Jersey Devils": "NJD", "Devils du New Jersey": "NJD", "New Jersey": "NJD", "Devils": "NJD",
+    "New York Islanders": "NYI", "Islanders de New York": "NYI","Islanders": "NYI",
+    "New York Rangers": "NYR", "Rangers de New York": "NYR", "Rangers": "NYR", "Rags": "NYR",
+    "Ottawa Senators": "OTT", "Senateurs d'Ottawa": "OTT", "Ottawa": "OTT", "Senators": "OTT", "Sens": "OTT",
+    "Philadelphia Flyers": "PHI", "Flyers de Philadelphie": "PHI", "Philadelphia": "PHI", "Flyers": "PHI",
+    "Pittsburgh Penguins": "PIT", "Penguins de Pittsburgh": "PIT",  "Pittsburgh": "PIT", "Penguins": "PIT",
+    "San Jose Sharks": "SJS", "Sharks de San Jose": "SJS", "San Jose": "SJS", "Sharks": "SJS",
+    "Seattle Kraken": "SEA", "Kraken de Seattle": "SEA", "Seattle": "SEA", "Seattle": "SEA",
+    "St. Louis Blues": "STL", "Blues de Saint-Louis": "STL", "St. Louis": "STL", "Blues": "STL",
+    "Tampa Bay Lightning": "TBL", "Lightning de Tampa Bay": "TBL", "Tampa Bay": "TBL", "Lightning": "TBL", "Bolts": "TBL",
+    "Toronto Maple Leafs": "TOR", "Maple Leafs de Toronto": "TOR", "Toronto": "TOR", "Maple Leafs": "TOR",
+    "Utah Mammoth": "UTA", "Mammoth de l'Utah": "UTA", "Utah": "UTA", "Mammoth": "UTA",
+    "Vancouver Canucks": "VAN", "Canucks de Vancouver": "VAN", "Vancouver": "VAN", "Canucks": "VAN", "Nucks": "VAN",
+    "Vegas Golden Knights": "VGK", "Golden Knights de Vegas": "VGK", "Vegas": "VGK", "Golden Knights": "VGK",
+    "Washington Capitals": "WSH", "Capitals de Washington": "WSH", "Washington": "WSH", "Capitals": "WSH", "Caps": "WSH",
+    "Winnipeg Jets": "WPG", "Jets de Winnipeg": "WPG", "Jets": "WPG", "Winnipeg": "WPG",
 }
 
 # API YEAR
@@ -162,75 +168,6 @@ def get_current_season():
         return f"{year - 1}{year}"
     return f"{year}{year + 1}"
 
-#FANTRAX
-
-async def fantrax_login():
-    if not FANTRAX_ENABLED:
-        print("Fantrax integration is disabled, skipping Login.")
-        return  # Exit early if Fantrax is disabled
-     
-    """Authenticate with Fantrax and return session token."""
-    login_url = "https://www.fantrax.com/fxpa/req"
-    
-    payload = {
-        "login": FANTRAX_USERNAME,
-        "password": FANTRAX_PASSWORD,
-        "method": "login"
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(login_url, json=payload) as response:
-            if response.status != 200:
-                print("Error: Failed to authenticate with Fantrax.")
-                return None
-            
-            data = await response.json()
-            if "sessionId" in data:
-                return data["sessionId"]
-            else:
-                print("Error: Fantrax login failed.")
-                return None
-
-async def track_fantrax_trades():
-    """Track Fantrax trades and post them to Discord."""
-    if not FANTRAX_ENABLED:
-        print("Fantrax integration is disabled, skipping trade tracking.")
-        return  # Exit early if Fantrax is disabled
-    session_id = await fantrax_login()
-    if not session_id:
-        return
-
-    league_id = os.getenv("FANTRAX_LEAGUE_ID")  # Store your league ID in .env
-    last_trade_id = None
-
-    channel = client.get_channel(DISCORD_TRADE_CHANNEL_ID)
-
-    if channel is None:
-        print("Error: Discord channel not found.")
-        return
-
-    while True:
-        trades = await get_fantrax_trades(session_id, league_id)
-        if trades:
-            for trade in trades:
-                trade_id = trade.get("tradeId")
-
-                if trade_id != last_trade_id:  # Prevent duplicate messages
-                    team_1 = trade["team1"]["name"]
-                    team_2 = trade["team2"]["name"]
-                    players_team_1 = ", ".join(player["name"] for player in trade["team1"]["players"])
-                    players_team_2 = ", ".join(player["name"] for player in trade["team2"]["players"])
-
-                    message = (
-                        f"🔥 **New Trade Alert!** 🔥\n"
-                        f"🏒 **{team_1}** traded: {players_team_1}\n"
-                        f"🔄 **{team_2}** traded: {players_team_2}"
-                    )
-
-                    await channel.send(message)
-                    last_trade_id = trade_id
-
-        await asyncio.sleep(300)  # Check for new trades every 5 minutes
 
 #WEBSCRAPE
 # Input Handler
@@ -734,7 +671,36 @@ async def send_embedded_image(channel, image_url):
         except aiohttp.ClientError:
             await channel.send("Unable to retrieve the image. The URL might be incorrect.")
 
+#Always Sunny Posting
 
+# Function to get CSRF token (manual extraction)
+async def get_csrf_token(session):
+    async with session.get(DEFAULT_CSRF_URL) as response:
+        cookies = response.cookies
+        csrf_token = cookies.get('CSRF-TOKEN')  # Adjust the cookie name if needed
+        if csrf_token:
+            return csrf_token.value  # Return the string value of the CSRF token
+        return None  # If no CSRF token found
+
+async def save_title(quote, CSRF_TOKEN):
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-TOKEN": CSRF_TOKEN,  # Use the CSRF token passed as an argument
+        "X-Requested-With": "XMLHttpRequest"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        data = {"text": quote}
+        
+        # Send POST request to save the title
+        async with session.post(IASIP_API_URL, headers=headers, json=data) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                key = response_data.get("key")
+                return f"https://iasip.app/{key}"
+            else:
+                return "Failed to save title"
 
 
 #Reading Functions 
@@ -799,7 +765,7 @@ async def on_message(message):
         else:
             # Convert the team name to its abbreviation
             team_abbreviation = convert_team_name_to_abbreviation(team_name)
-        
+            print(team_abbreviation)
             # Check if the team abbreviation was successfully found
             if team_abbreviation:
                 # Print the abbreviated name to the console for debugging purposes
@@ -824,7 +790,49 @@ async def on_message(message):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fjustin-trudeau-you-cant-take-our-country-and-you-cant-take-v0-3aa23x5b8fke1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D5946f29f18e5c6e235f8d28522c61bbbda84378a")
 
     if content_lower.startswith("!firegreg"):
-        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fday-of-adding-things-to-a-picture-of-greg-cronin-until-he-v0-cakncid1mlke1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D680104298177be562dc0bb6418f38ec2f4da8ef5")
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fday-of-adding-things-to-a-picture-of-greg-cronin-until-he-v0-mgpst04o4tve1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D24f9a46a80ea3fb2de41164425c1a60438cd1153")
+    
+    if content_lower.startswith("!fireq"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fcavanagh-frank-vatrano-played-for-joel-quenneville-in-v0-jakkfw3znoze1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D3145bfe31a61203e8cfd46c559574a0b69723816")
+
+    if content_lower.startswith("!petey"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Foehv1qdksd621.jpg")
+
+    if content_lower.startswith("!bracket"):
+        await message.channel.send("https://bracketchallenge.nhl.com/en/leagues/75643 Password hockey. Sign up before 3PST TODAY \n\n jk you are too late")
+
+    if content_lower.strip() in ("!playoff", "!playoffs"):
+        await message.channel.send(
+        "Hey everyone, its that time of year again - NHL Playoffs  meaning the yearly playoff pool. \n\n"
+        "Same website as usual: https://hockeydraft.ca/ \n"
+        "Login information (please be sure \"playoffs\" is checked before attempting to sign in):\n\n"
+        "          Username: RussianMafia8\n"
+        "          Password: great8 \n\n"
+        "When you login, to create your team, please go to the 'Entry Form' tab near the top left. From there, you will see 25 boxes of players/goalies/teams to select from. You may make one selection per box. Please remember once the first game starts, there will be no changes to your team. In other words, the team you select by the time of the first playoff game will be your team for the entire playoffs. \n\n"
+        "The point system can be seen at the bottom of the page of your entry form when you create your team. \n\n"
+        "Buy-in is $20 paid to jmsparmar@shaw.ca - if i dont receive payment prior to the first game, i may delete your team. To make it easier on me, if you could please indicate your team name as a message that forms the etransfer, that would help me out a lot (especially for those people that i do not know lol). \n\n"
+        "This year, top 3 get money (as usual) and i am reimplementing the return of $20 if you come last. \n\n"
+        "As usual, feel free to pass this information along to friends and family!\n\n"
+        "GOODLUCK!!!!"
+    )
+
+
+    if content_lower.startswith("!gang "):
+        quote = message.content[len("!gang "):].strip()  # Use message.content here
+        
+        await message.delete()
+
+        async with aiohttp.ClientSession() as session:
+            # Extract the CSRF token
+            csrf_token = await get_csrf_token(session)
+            
+            if csrf_token:
+                # Call the save_title function with the CSRF token
+                url = await save_title(quote, csrf_token)
+                await message.channel.send(url)
+            else:
+                await message.channel.send("Failed to retrieve CSRF token")
+
 
     # Admin Override Commands (Add & Delete Channel)
     if ADMIN_OVERRIDE:
