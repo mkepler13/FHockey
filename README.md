@@ -65,7 +65,7 @@ A Discord bot that fetches NHL team standings, playoff odds and player stats usi
 
    ```
    User: !Test
-   Bot: I am alive and listening! Version: 0.4.0
+   Bot: I am alive and listening! Version: 0.5.0
    ```
 
 ### !Standings
