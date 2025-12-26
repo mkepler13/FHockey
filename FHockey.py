@@ -18,8 +18,9 @@ import urllib.parse # Import urllib for URL parsing
 import io # Import io for handling file-like 
 import random
 from fastapi import FastAPI
+from typing import Optional
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -90,6 +91,10 @@ plus_minus_tracker = [
 shot_on_net_tracker = [
     {"name": "Cody Ceci", "id": 8476879}
 ]
+
+REDDIT_HEADERS = {
+    "User-Agent": "FantasyHockeyBot/1.0 by u/Falsey8"
+}
 
 
 test_players_to_track = [
@@ -719,6 +724,38 @@ async def save_title(quote, CSRF_TOKEN):
                 return f"https://iasip.app/{key}"
             else:
                 return "Failed to save title"
+            
+
+async def get_latest_fantasy_hockey_image(username: str) -> Optional[str]:
+    url = f"https://www.reddit.com/user/{username}/submitted.json?limit=15"
+
+    async with aiohttp.ClientSession(headers=REDDIT_HEADERS) as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+
+    posts = data.get("data", {}).get("children", [])
+
+    for post in posts:
+        p = post.get("data", {})
+        title = p.get("title", "")
+
+        if not title.startswith("Fantasy Hockey Schedule Summary"):
+            continue
+
+        # Regular image post
+        if p.get("post_hint") == "image":
+            return p.get("url")
+
+        # Gallery post (first image)
+        if p.get("is_gallery"):
+            media = p.get("media_metadata", {})
+            for item in media.values():
+                if "s" in item and "u" in item["s"]:
+                    return item["s"]["u"].replace("&amp;", "&")
+
+    return None
 
 
 #Reading Functions 
@@ -736,7 +773,19 @@ async def on_message(message):
             return
         await message.channel.send("I am alive and listening!" + " Version: " + VERSION)
 
-    if content_lower.startswith("!standings"):
+    elif content_lower.startswith("!help"):
+        await message.channel.send("**🏒 Available Commands:**\n"
+                    "`!test` - Check Bot status and Version\n"
+                    "`!playerpoints <player name or ID>` - Shows a Players Points\n"
+                    "`!standings` - Shows NHL Current Standings\n"
+                    "`!playoffodds <Team>` - Shows a team's current Playoff odds\n"
+                    "`!weekly` - Shows this weeks daily game schedule\n"
+                    "`---- Fantrax Commands ----`\n"
+                    "`!fantraxstandings` - Shows the current Fantrax Standings\n"
+                    "`---- Fun Commands ----`\n"
+                    "`!inform`, `!freepetey`, `!quack`, `!dops`, `!canada`, `!firegreg`, `!fuckyou`, `!petey`, `!bracket`, `!playoffs`, `!pylon`, `!bolduc`, `!gang <message>` \n")
+
+    elif content_lower.startswith("!standings"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
         if message.channel.id not in allowed_channels:
             return
@@ -755,7 +804,7 @@ async def on_message(message):
         result = await get_standings(team_name)
         await message.channel.send(result)
 
-    if content_lower.startswith("!playerpoints"):
+    elif content_lower.startswith("!playerpoints"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
         if message.channel.id not in allowed_channels:
             return
@@ -768,7 +817,7 @@ async def on_message(message):
         result = await get_player_points(player_input)
         await message.channel.send(result)
 
-    if content_lower.startswith("!playoffodds"):
+    elif content_lower.startswith("!playoffodds"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
         if message.channel.id not in allowed_channels:
             return
@@ -796,30 +845,54 @@ async def on_message(message):
                 # If the team name couldn't be converted, send an error message
                 await message.channel.send(f"Sorry, I couldn't find the team '{team_name}'. Please make sure the name is correct and try again.")
 
+
+    elif content_lower.startswith("!weekly"):
+        reddit_username = "tomstoms"
+
+        image_url = await get_latest_fantasy_hockey_image(reddit_username)
+
+        if image_url:
+            await send_embedded_image(message.channel, image_url)
+        else:
+            await message.channel.send("Couldn't find the latest Fantasy Hockey Schedule Summary image.")
+
+    
         
     # Shitpost messages
-    if content_lower.startswith("!freepetey"):
+
+    elif content_lower.startswith("!inform"):
+        await message.channel.send("'Moron' was coined in 1910 by psychologist Henry H. Goddard from the Ancient Greek word μωρός (moros), which meant 'dull' and used to describe a person with a mental age in adulthood of between 7 and 10 on the Binet scale. It was once applied to people with an intelligence quotient (IQ) of 51 to 70, being superior in one degree to 'imbecile' (IQ of 2 to 50) and superior in two degrees to 'idiot' (IQ of  to 25). The word moron, along with others including 'idiotic', 'imbecilic', 'stupid', and 'feeble-minded', was formerly considered a valid descriptor in the psychological community, but it is now deprecated in use by psychologists. Following opposition to Goddard's attempts to popularize his ideas,Goddard recanted his earlier assertions about the moron: 'It may still be objected that moron parents are likely to have imbecile or idiot children. There is not much evidence that this is the case. The danger is probably negligible.'")
+
+
+    elif content_lower.startswith("!freepetey"):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
 
-    if content_lower.startswith("!quack"):
+    elif content_lower.startswith("!quack"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsneak-peak-of-ne-anaheim-ducks-logo-v0-6eugvzi3z57d1.jpeg%3Fauto%3Dwebp%26s%3D0ebf31d88d0cbd4d591698c02f145a042e815799") 
 
-    if content_lower.startswith("!canada"):
+    elif content_lower.startswith("!dops"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fseth-jarvis-leaves-the-game-injured-in-ot-tripped-by-v0-2itys2bbz98g1.jpeg%3Fwidth%3D320%26crop%3Dsmart%26auto%3Dwebp%26s%3D47f03b5a3f32d481598ee02dd2486f35b52c5125") 
+
+
+    elif content_lower.startswith("!canada"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fjustin-trudeau-you-cant-take-our-country-and-you-cant-take-v0-3aa23x5b8fke1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D5946f29f18e5c6e235f8d28522c61bbbda84378a")
 
-    if content_lower.startswith("!firegreg"):
+    elif content_lower.startswith("!firegreg"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fday-of-adding-things-to-a-picture-of-greg-cronin-until-he-v0-mgpst04o4tve1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D24f9a46a80ea3fb2de41164425c1a60438cd1153")
     
-    if content_lower.startswith("!fireq"):
-        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fcavanagh-frank-vatrano-played-for-joel-quenneville-in-v0-jakkfw3znoze1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D3145bfe31a61203e8cfd46c559574a0b69723816")
+    elif content_lower.startswith("!fireq"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fpowers-john-doe-black-ace-1s-lawyers-at-romanucci-blandin-v0-ghoedh8uklze1.jpeg%3Fwidth%3D640%26crop%3Dsmart%26auto%3Dwebp%26s%3De040aeb912fc1ea0bad5d4f89cefa782fc1650a7")
 
-    if content_lower.startswith("!petey"):
+    elif content_lower.startswith("!fuckyou"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsaturday-headlines-friedman-reports-quinn-hughes-told-the-v0-lcwyyxll347g1.jpeg%3Fauto%3Dwebp%26s%3Dd8893780aaa6505c959b444647e5dc565f4aeb4e")
+
+    elif content_lower.startswith("!petey"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Foehv1qdksd621.jpg")
 
-    if content_lower.startswith("!bracket"):
+    elif content_lower.startswith("!bracket"):
         await message.channel.send("https://bracketchallenge.nhl.com/en/leagues/75643 Password hockey. Sign up before 3PST TODAY \n\n jk you are too late")
 
-    if content_lower.strip() in ("!playoff", "!playoffs"):
+    elif content_lower.strip() in ("!playoff", "!playoffs"):
         await message.channel.send(
         "Hey everyone, its that time of year again - NHL Playoffs  meaning the yearly playoff pool. \n\n"
         "Same website as usual: https://hockeydraft.ca/ \n"
@@ -833,9 +906,29 @@ async def on_message(message):
         "As usual, feel free to pass this information along to friends and family!\n\n"
         "GOODLUCK!!!!"
     )
+        
+    elif content_lower.startswith("!pylon"):
+        reddit_username = "tomstoms"
+
+        image_url = "https://media1.tenor.com/m/N6xIDfjWoEUAAAAd/tyler-myers-mattias-janmark.gif"
+
+        if image_url:
+            await send_embedded_image(message.channel, image_url)
+        else:
+            await message.channel.send("Couldn't find the latest Fantasy Hockey Schedule Summary image.")
+
+    elif content_lower.startswith("!bolduc"):
+        reddit_username = "tomstoms"
+
+        image_url = "https://media1.tenor.com/m/X3pYgEib-WUAAAAd/montr%C3%A9al-montreal-canadiens.gif"
+
+        if image_url:
+            await send_embedded_image(message.channel, image_url)
+        else:
+            await message.channel.send("Couldn't find the latest Fantasy Hockey Schedule Summary image.")
 
 
-    if content_lower.startswith("!gang "):
+    elif content_lower.startswith("!gang "):
         quote = message.content[len("!gang "):].strip()  # Use message.content here
         
         await message.delete()
@@ -851,9 +944,164 @@ async def on_message(message):
             else:
                 await message.channel.send("Failed to retrieve CSRF token")
 
+    ##Fantrax Commands
+
+    elif content_lower.startswith("!transactions"):
+        allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Only allow in bot-spam channel
+        if message.channel.id not in allowed_channels:
+            return
+
+        await message.channel.send("📡 Fetching latest Fantrax transactions...")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{FANTRAX_API}/transactions") as resp:
+                    if resp.status != 200:
+                        await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                        return
+
+                    data = await resp.json()
+
+            # Handle error message from API
+            if "error" in data:
+                await message.channel.send(f"⚠️ {data['error']}")
+                return
+
+            transactions_list = data.get("transactions", [])[-10:]  # last 10 transactions
+
+            if not transactions_list:
+                await message.channel.send("ℹ️ No transactions found.")
+                return
+
+            embed = discord.Embed(
+                title="📝 Last 10 Fantrax Transactions",
+                color=discord.Color.orange()
+            )
+
+            for t in transactions_list:
+                # Format each transaction
+                desc = f"**Type:** {t.get('type', 'N/A')}\n"
+                desc += f"**Players:** {', '.join(t.get('players', []))}\n"
+                desc += f"**Teams Involved:** {', '.join(t.get('teams', []))}\n"
+                desc += f"**Date:** {t.get('date', 'Unknown')}"
+            
+                embed.add_field(name=t.get('summary', 'Transaction'), value=desc, inline=False)
+
+            await message.channel.send(embed=embed)
+
+        except Exception as e:
+            await message.channel.send(f"🚨 Error fetching transactions: `{e}`")
+
+
+    elif content_lower.startswith("!fantraxstandings"):
+        #allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Only allow in bot-spam channel
+        #if message.channel.id not in allowed_channels:
+        #        return
+
+        await message.channel.send("📡 Fetching current Fantrax standings...")
+
+        try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{FANTRAX_API}/standings") as resp:
+                        if resp.status != 200:
+                            await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                            return
+
+                        data = await resp.json()
+
+            # Handle error message from API
+                if "error" in data:
+                    await message.channel.send(f"⚠️ {data['error']}")
+                    return
+
+                standings = data.get("standings", [])
+                if not standings:
+                    await message.channel.send("ℹ️ No standings data found.")
+                    return
+
+                embed = discord.Embed(
+                    title="🏆 Fantrax League Standings",
+                    color=discord.Color.gold()
+                )
+
+                # Calculate leader points (rank 1)
+                leader = standings[0]
+                leader_points = ((leader.get("win", 0) * 2) + leader.get("tie", 0)) / 2
+
+                # Loop through standings and add them to the embed
+                for record in standings:
+                    rank = record.get("rank", "?")
+                    team = record.get("team", "Unknown")
+                    win = record.get("win", 0)
+                    loss = record.get("loss", 0)
+                    tie = record.get("tie", 0)
+                    points = ((win * 2) + tie) / 2
+                    games_back = leader_points - points
+
+                    embed.add_field(
+                        name=f"#{rank} - {team}",
+                        value=f"**Record:** {win}-{loss}-{tie}\n**Points:** {points}  |   **GB:** {games_back}",
+                        inline=False
+                    )
+
+                await message.channel.send(embed=embed)
+
+        except Exception as e:
+                await message.channel.send(f"🚨 Error fetching Fantrax standings: `{e}`")
+
+    elif content_lower.startswith("!matchups"):
+        allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Only allow in bot-spam channel
+        if message.channel.id not in allowed_channels:
+            return
+
+        await message.channel.send("📡 Fetching current Fantrax matchups...")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{FANTRAX_API}/matchups") as resp:
+                    if resp.status != 200:
+                        await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                        return
+
+                    data = await resp.json()
+
+            # Handle error message from API
+            if "error" in data:
+                await message.channel.send(f"⚠️ {data['error']}")
+                return
+
+            matchups = data.get("matchups", [])
+            if not matchups:
+                await message.channel.send("ℹ️ No current matchups found.")
+                return
+
+            embed = discord.Embed(
+                title="🏒 Current Fantrax Matchups",
+                color=discord.Color.blue()
+            )
+
+            # Loop through matchups and add them to the embed
+            for m in matchups:
+                home_team = m.get("home_team", "???")
+                away_team = m.get("away_team", "???")
+                home_score = m.get("home_score", "N/A")
+                away_score = m.get("away_score", "N/A")
+                period = m.get("period_name", "Unknown")
+
+                embed.add_field(
+                    name=f"{home_team} 🆚 {away_team}",
+                    value=f"**{home_score}** - **{away_score}**\n_Period: {period}_",
+                    inline=False
+                )
+
+            await message.channel.send(embed=embed)
+
+        except Exception as e:
+            await message.channel.send(f"🚨 Error fetching matchups: `{e}`")
+
 
     # Admin Override Commands (Add & Delete Channel)
-    if ADMIN_OVERRIDE:
+    elif ADMIN_OVERRIDE:
         if content_lower.startswith("!addchannel"):
             allowed_channels = [DISCORD_INFO_CHANNEL_ID]  # Restrict command usage to specific channels
             if message.channel.id not in allowed_channels:
