@@ -3,7 +3,7 @@ import os # Import os for interacting with the operating system
 from fantraxapi import FantraxAPI, FantraxException
 from dotenv import load_dotenv # Import load_dotenv from dotenv for loading environment variables
 from requests import Session
-import sys
+#import sys
 import io
 import os
 import pickle
@@ -143,6 +143,69 @@ def get_standings():
         })
 
     return {"standings": table}
+
+@app.get("/rosters")
+def get_rosters():
+    if not login_success or api is None:
+        return {"error": "Not logged in"}
+
+    rosters = []
+
+    for team in api.teams:
+        team_id = getattr(team, "team_id", None)
+        if not team_id:
+            continue
+
+        team_name = getattr(team, "name", None)
+        team_nickname = getattr(team, "short", None)
+
+        try:
+            roster_obj = api.roster_info(team_id)
+            player_names = []
+
+            for row in roster_obj.rows:
+                # Access the player attribute directly
+                if hasattr(row, "player") and row.player:
+                    player_names.append(str(row.player))  # str(row.player) gives the player's full name
+                else:
+                    player_names.append("Unknown Player")
+
+        except Exception as e:
+            player_names = []
+            print(f"⚠️ Failed to fetch roster for {team_name}: {e}")
+
+        rosters.append({
+            "team_id": team_id,
+            "name": team_name,
+            "nickname": team_nickname,
+            "players": player_names
+        })
+
+    return {"rosters": rosters}
+
+@app.get("/teams") 
+def get_teams():
+    """Return all fantasy teams in the league."""
+    if not login_success or api is None:
+        return {"error": "Not logged in"}
+
+    teams = []
+
+    # Most Fantrax wrappers expose this
+    for team in api.teams:
+        team_id = (
+            getattr(team, "team_id", None)
+            or getattr(team, "teamId", None)
+            or getattr(team, "_id", None)
+        )
+
+        teams.append({
+            "team_id": team_id,
+            "name": team.name,
+            "nickname": team.short,
+        })
+
+    return {"teams": teams}
 
 @app.get("/matchups")
 def get_matchups():
