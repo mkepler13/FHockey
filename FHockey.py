@@ -12,12 +12,14 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from datetime import datetime # Import datetime for date/time manipulation
-import difflib  # Import difflib for string matching
+#import difflib  # Import difflib for string matching
 import urllib.parse # Import urllib for URL parsing
 import io # Import io for handling file-like 
 import random
-from fastapi import FastAPI
+#from fastapi import FastAPI
 from typing import Optional
 
 VERSION = "0.5.0"
@@ -289,6 +291,38 @@ async def get_playoff_odds(team_name=None):
     finally:
         driver.quit()
 
+
+# Scrape world juniors
+async def get_u20_world_juniors_stats():
+    url = "https://www.hokejspravy.sk/rubriky/ms-v-hokeji/statistiky-ms-u20-kanadske-bodovanie-strelci-brankari_1974.html"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return f"❌ HTTP {resp.status}"
+
+            html = await resp.text()
+            soup = BeautifulSoup(html, "html.parser")
+
+            # find table
+            table = soup.find("table")
+            if not table:
+                return "⚠️ No table found"
+
+            players = []
+            for row in table.find_all("tr")[1:]:  # skip header
+                cols = row.find_all("td")
+                if len(cols) >= 4:
+                    player = cols[0].get_text(strip=True)
+                    goals = int(cols[2].get_text(strip=True) or "0")
+                    assists = int(cols[3].get_text(strip=True) or "0")
+                    points = int(cols[4].get_text(strip=True) or (goals + assists))
+                    players.append({
+                        "player": player,
+                        "goals": goals,
+                        "assists": assists,
+                        "points": points
+                    })
+            return players
 
 #NHL API
 
@@ -764,7 +798,6 @@ async def get_latest_fantasy_hockey_image(username: str) -> Optional[str]:
 async def on_message(message):
     if message.author == client.user: #ignore if message is from bot
         return
-
     content_lower = message.content.lower() # Convert the message content to lowercase for case-insensitive comparison
 
     if content_lower.startswith("!test"):
@@ -782,6 +815,8 @@ async def on_message(message):
                     "`!weekly` - Shows this weeks daily game schedule\n"
                     "`---- Fantrax Commands ----`\n"
                     "`!fantraxstandings` - Shows the current Fantrax Standings\n"
+                    "`!fantraxteams` - Shows the Fantrax Team names and Nicknames\n"
+                    "`!fantraxroster <Team>` - Shows the Fantrax Roster for requested team. (Uses Team names or Nicknames)\n"
                     "`---- Fun Commands ----`\n"
                     "`!inform`, `!freepetey`, `!quack`, `!dops`, `!canada`, `!firegreg`, `!fuckyou`, `!petey`, `!bracket`, `!playoffs`, `!pylon`, `!bolduc`, `!gang <message>` \n")
 
@@ -845,7 +880,6 @@ async def on_message(message):
                 # If the team name couldn't be converted, send an error message
                 await message.channel.send(f"Sorry, I couldn't find the team '{team_name}'. Please make sure the name is correct and try again.")
 
-
     elif content_lower.startswith("!weekly"):
         reddit_username = "tomstoms"
 
@@ -856,13 +890,32 @@ async def on_message(message):
         else:
             await message.channel.send("Couldn't find the latest Fantasy Hockey Schedule Summary image.")
 
+
+    elif content_lower.startswith("!wj"):
+        await message.channel.send("📡 Fetching World Juniors scoring leaders...")
     
+        try:
+            # Call your async scraper
+            players_stats = await get_u20_world_juniors_stats()
         
-    # Shitpost messages
+            if not players_stats:
+                await message.channel.send("❌ No data found from IIHF.")
+                return
+
+            # Print the raw data to your console
+            print("=== World Juniors Scoring Leaders ===")
+            for player in players_stats:
+                print(f"{player['player']}: Goals={player['goals']}, Assists={player['assists']}, Points={player['points']}")
+        
+            await message.channel.send("✅ Data fetched! Check your console for output.")
+
+        except Exception as e:
+            await message.channel.send(f"🚨 Error fetching World Juniors data: `{e}`")    
+
+    ##Shitpost messages
 
     elif content_lower.startswith("!inform"):
         await message.channel.send("'Moron' was coined in 1910 by psychologist Henry H. Goddard from the Ancient Greek word μωρός (moros), which meant 'dull' and used to describe a person with a mental age in adulthood of between 7 and 10 on the Binet scale. It was once applied to people with an intelligence quotient (IQ) of 51 to 70, being superior in one degree to 'imbecile' (IQ of 2 to 50) and superior in two degrees to 'idiot' (IQ of  to 25). The word moron, along with others including 'idiotic', 'imbecilic', 'stupid', and 'feeble-minded', was formerly considered a valid descriptor in the psychological community, but it is now deprecated in use by psychologists. Following opposition to Goddard's attempts to popularize his ideas,Goddard recanted his earlier assertions about the moron: 'It may still be objected that moron parents are likely to have imbecile or idiot children. There is not much evidence that this is the case. The danger is probably negligible.'")
-
 
     elif content_lower.startswith("!freepetey"):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
@@ -872,7 +925,6 @@ async def on_message(message):
 
     elif content_lower.startswith("!dops"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fseth-jarvis-leaves-the-game-injured-in-ot-tripped-by-v0-2itys2bbz98g1.jpeg%3Fwidth%3D320%26crop%3Dsmart%26auto%3Dwebp%26s%3D47f03b5a3f32d481598ee02dd2486f35b52c5125") 
-
 
     elif content_lower.startswith("!canada"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fjustin-trudeau-you-cant-take-our-country-and-you-cant-take-v0-3aa23x5b8fke1.jpeg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D5946f29f18e5c6e235f8d28522c61bbbda84378a")
@@ -926,7 +978,6 @@ async def on_message(message):
             await send_embedded_image(message.channel, image_url)
         else:
             await message.channel.send("Couldn't find the latest Fantasy Hockey Schedule Summary image.")
-
 
     elif content_lower.startswith("!gang "):
         quote = message.content[len("!gang "):].strip()  # Use message.content here
@@ -992,13 +1043,101 @@ async def on_message(message):
         except Exception as e:
             await message.channel.send(f"🚨 Error fetching transactions: `{e}`")
 
+    elif content_lower.startswith("!fantraxteams"):
 
+        #await message.channel.send("📡 Fetching current Fantrax teamlist...")
+    
+        try:
+            async with aiohttp.ClientSession() as session:    
+                async with session.get(f"{FANTRAX_API}/teams") as resp:
+                    if resp.status != 200:
+                        await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                        return
+
+                    data = await resp.json()
+                
+                    # Build the message
+                    team_lines = [f"{team['name']} ({team['nickname']})" for team in data['teams']]
+                    team_message = "\n".join(team_lines)
+
+                    # Create an embed with red color
+                    embed = discord.Embed(
+                        title="Fantrax Team List",
+                        description=team_message,
+                        color=discord.Color.red()  # Red color
+                    )
+
+                    await message.channel.send(embed=embed)
+
+        except Exception as e:
+            await message.channel.send(f"🚨 Error fetching Fantrax teamlist: `{e}`")
+
+    elif content_lower.startswith("!fantraxrosterlist"):
+        await message.channel.send("📡 Fetching current Fantrax rosterlist...")
+        
+        try:
+                async with aiohttp.ClientSession() as session:    
+                    async with session.get(f"{FANTRAX_API}/rosters") as resp:
+                        if resp.status != 200:
+                            await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                            return
+
+                        data = await resp.json()
+                        print(data)
+                        player_names = [p.get("name") for p in data.get("players", [])]
+                        print(player_names)
+                   
+                        await message.channel.send("✅ Fantrax roster list fetched.")
+                        await message.channel.send("✅ Prepare for message hell:" + player_names['players'])
+
+        except Exception as e:
+                await message.channel.send(f"🚨 Error fetching Fantrax rosterlist: `{e}`")
+
+    elif content_lower.startswith("!fantraxroster "):
+        #await message.channel.send("📡 Fetching current Fantrax rosterlist...")
+        # Extract the team query
+        team_query = message.content[len("!fantraxroster "):].strip().lower()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{FANTRAX_API}/rosters") as resp:
+                    if resp.status != 200:
+                        await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                        return
+
+                    data = await resp.json()
+                    rosters = data.get("rosters", [])
+
+            # Search for the team
+            matched_team = None
+            for team in rosters:
+                if team_query in team.get("name", "").lower() or team_query in team.get("nickname", "").lower():
+                    matched_team = team
+                    break
+
+            if not matched_team:
+                await message.channel.send(f"❌ No team found matching '{team_query}'.")
+                return
+
+            # Create the embed
+            embed = discord.Embed(
+                title=f"{matched_team['name']} ({matched_team['nickname']}) Roster",
+                description="\n".join(matched_team['players']),
+                color=discord.Color.blue()
+            )
+
+            # Send the embed
+            await message.channel.send(embed=embed)
+
+        except Exception as e:
+            await message.channel.send(f"🚨 Error fetching Fantrax rosterlist: `{e}`")
+    
     elif content_lower.startswith("!fantraxstandings"):
         #allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Only allow in bot-spam channel
         #if message.channel.id not in allowed_channels:
         #        return
 
-        await message.channel.send("📡 Fetching current Fantrax standings...")
+        #await message.channel.send("📡 Fetching current Fantrax standings...")
 
         try:
                 async with aiohttp.ClientSession() as session:
@@ -1099,8 +1238,8 @@ async def on_message(message):
         except Exception as e:
             await message.channel.send(f"🚨 Error fetching matchups: `{e}`")
 
-
     # Admin Override Commands (Add & Delete Channel)
+
     elif ADMIN_OVERRIDE:
         if content_lower.startswith("!addchannel"):
             allowed_channels = [DISCORD_INFO_CHANNEL_ID]  # Restrict command usage to specific channels
