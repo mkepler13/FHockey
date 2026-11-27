@@ -8,6 +8,8 @@ import io
 import os
 import pickle
 import time
+import re
+from datetime import datetime
 from requests import Session
 from selenium import webdriver
 from selenium.webdriver import Keys
@@ -151,6 +153,16 @@ def get_rosters():
 
     rosters = []
 
+    position_map = {
+        "206": "C",
+        "203": "LW",
+        "204": "RW",
+        "202": "D",
+        "201": "G",
+        "0": "Res",
+        "-1": "IR"
+    }
+
     for team in api.teams:
         team_id = getattr(team, "team_id", None)
         if not team_id:
@@ -164,11 +176,83 @@ def get_rosters():
             player_names = []
 
             for row in roster_obj.rows:
-                # Access the player attribute directly
                 if hasattr(row, "player") and row.player:
-                    player_names.append(str(row.player))  # str(row.player) gives the player's full name
+                    player_name = str(row.player)
+                    pos_id = str(getattr(row, "pos_id", ""))
+
+                    position = position_map.get(pos_id, "Unknown")
+
+                    player_names.append(f"{player_name} - {position} ")
+
+        except Exception as e:
+            player_names = []
+            print(f"⚠️ Failed to fetch roster for {team_name}: {e}")
+
+        rosters.append({
+            "team_id": team_id,
+            "name": team_name,
+            "nickname": team_nickname,
+            "players": player_names
+        })
+
+    return {"rosters": rosters}
+
+
+@app.get("/rosters2")
+def get_rosters():
+    if not login_success or api is None:
+        return {"error": "Not logged in"}
+
+    rosters = []
+
+    for team in api.teams:
+        team_id = getattr(team, "team_id", None)
+        if not team_id:
+            continue
+
+        team_name = getattr(team, "name", None)
+        team_nickname = getattr(team, "short", None)
+
+        try:
+            roster_obj = api.roster_info(team_id)
+
+            # ==================================================
+            # DEBUG: Print raw roster data to Python console
+            # ==================================================
+            print("\n" + "=" * 70)
+            print(f"RAW FANTRAX ROSTER DATA")
+            print(f"Team: {team_name}")
+            print(f"Nickname: {team_nickname}")
+            print(f"Team ID: {team_id}")
+            print("=" * 70)
+
+            print("\nRoster object:")
+            print(repr(roster_obj))
+
+            print("\nRoster rows:")
+
+            player_names = []
+
+            for i, row in enumerate(roster_obj.rows, 1):
+
+                print(f"\n--- Row {i} ---")
+                print("Raw row:")
+                print(repr(row))
+
+                # Print all available attributes on the row
+                if hasattr(row, "__dict__"):
+                    print("Row attributes:")
+                    print(vars(row))
+
+                # Existing working player-name logic
+                if hasattr(row, "player") and row.player:
+                    player_names.append(str(row.player))
                 else:
                     player_names.append("Unknown Player")
+
+            print("\n" + "=" * 70)
+            print(f"END RAW ROSTER DATA: {team_name}")
+            print("=" * 70 + "\n")
 
         except Exception as e:
             player_names = []
@@ -207,6 +291,7 @@ def get_teams():
 
     return {"teams": teams}
 
+
 @app.get("/matchups")
 def get_matchups():
     global api, login_success
@@ -217,60 +302,227 @@ def get_matchups():
         if not login_success or api is None:
             return {"error": "Not logged in"}
 
-        print("⏳ Fetching scoring periods")
+        print("⏳ Fetching Fantrax matchup data")
 
-        # ✅ FIX: fetch scoreboard / scoring periods, NOT goalie max
-        periods = None
+        # Get the existing authenticated Fantrax session
+        session = getattr(api, "session", None)
 
-        for attr in ("scoreboards", "scoreboard", "scoring_periods", "schedule"):
-            if hasattr(api, attr):
-                periods = getattr(api, attr)
-                print(f"✅ Using api.{attr}")
-                break
+        if session is None:
+            session = getattr(api, "_session", None)
 
-        if periods is None:
-            return {"error": "API does not expose scoring periods"}
+        if session is None:
+            return {"error": "Could not find Fantrax session"}
 
-        if not periods:
-            return {"error": "No scoring periods available"}
+        # Request the Schedule / Results view
+        request_data = {
+            "msgs": [
+                {
+                    "method": "getStandings",
+                    "data": {
+                        "leagueId": FANTRAX_LEAGUE_ID,
+                        "view": "SCHEDULE"
+                    }
+                }
+            ]
+        }
 
-        current_periods = [
-            p for p in periods
-            if getattr(p, "current", False)
-        ]
+        response = session.post(
+            "https://www.fantrax.com/fxpa/req",
+            params={
+                "leagueId": FANTRAX_LEAGUE_ID
+            },
+            json=request_data
+        )
 
-        if not current_periods:
-            return {"error": "No current scoring period"}
+        if response.status_code != 200:
+            return {
+                "error": f"Fantrax returned HTTP {response.status_code}"
+            }
 
-        scoreboard = current_periods[0]
+        raw_data = response.json()
 
-        if not getattr(scoreboard, "matchups", None):
-            return {"error": "No matchups available"}
+        # Extract the actual Fantrax response
+        responses = raw_data.get("responses", [])
 
+        if not responses:
+            return {"error": "Fantrax returned no response data"}
+
+        fantrax_data = responses[0].get("data", {})
+
+        # Get all scoring-period tables
+        table_list = fantrax_data.get("tableList", [])
+
+        if not table_list:
+            return {"error": "No scoring-period tables found"}
+
+        # Find the scoring period containing today's date.
+        # We intentionally don't use displayedSelections.period:
+        # the uploaded dump showed that value did not match the
+        # scoring period corresponding to the current date.
+
+        today = datetime.now().date()
+        current_table = None
+
+        for table in table_list:
+            sub_caption = table.get("subCaption", "")
+
+            # Example:
+            # (Mon Nov 23, 2026 - Sun Nov 29, 2026)
+            date_match = re.search(
+                r"([A-Za-z]{3} [A-Za-z]{3} \d{1,2}, \d{4})"
+                r"\s*[-–]\s*"
+                r"([A-Za-z]{3} [A-Za-z]{3} \d{1,2}, \d{4})",
+                sub_caption
+            )
+
+            if not date_match:
+                continue
+
+            try:
+                start_date = datetime.strptime(
+                    date_match.group(1),
+                    "%a %b %d, %Y"
+                ).date()
+
+                end_date = datetime.strptime(
+                    date_match.group(2),
+                    "%a %b %d, %Y"
+                ).date()
+
+                if start_date <= today <= end_date:
+                    current_table = table
+                    break
+
+            except ValueError:
+                continue
+
+        if current_table is None:
+            available_periods = [
+                {
+                    "caption": table.get("caption"),
+                    "dates": table.get("subCaption")
+                }
+                for table in table_list
+            ]
+
+            return {
+                "error": f"No scoring period found for {today}",
+                "available_periods": available_periods
+            }
+
+        period_name = current_table.get(
+            "caption",
+            "Current Scoring Period"
+        )
+
+        period_dates = current_table.get("subCaption", "")
+
+        print(f"✅ Found {period_name} {period_dates}")
+
+        # Extract matchup rows
+        rows = current_table.get("rows", [])
+
+        matchups_by_id = {}
+
+        for row in rows:
+            matchup_id = row.get("matchupId")
+
+            if not matchup_id:
+                continue
+
+            fixed_cells = row.get("fixedCells", [])
+            cells = row.get("cells", [])
+
+            if not fixed_cells or len(cells) < 3:
+                continue
+
+            team_name = fixed_cells[0].get("content")
+
+            if not team_name:
+                continue
+
+            try:
+                wins = int(cells[0].get("content"))
+                losses = int(cells[1].get("content"))
+                ties = int(cells[2].get("content"))
+            except (TypeError, ValueError):
+                # Skip rows without actual matchup scores
+                continue
+
+            if matchup_id not in matchups_by_id:
+                matchups_by_id[matchup_id] = []
+
+            matchups_by_id[matchup_id].append({
+                "team": team_name,
+                "wins": wins,
+                "losses": losses,
+                "ties": ties
+            })
+
+        # Combine the two team rows belonging to each matchup
         matchups_list = []
 
-        for m in scoreboard.matchups:
+        for matchup_id, teams in matchups_by_id.items():
+
+            if len(teams) != 2:
+                print(
+                    f"⚠️ Skipping matchup {matchup_id}: "
+                    f"expected 2 teams, found {len(teams)}"
+                )
+                continue
+
+            team1 = teams[0]
+            team2 = teams[1]
+
             matchup_data = {
-                "home_team": getattr(m.home_team, "name", "???"),
-                "away_team": getattr(m.away_team, "name", "???"),
-                "home_score": getattr(m, "home_score", 0),
-                "away_score": getattr(m, "away_score", 0),
-                "period_name": getattr(scoreboard, "name", "Current Period"),
-                "complete": getattr(scoreboard, "complete", False),
-                "is_playoff": getattr(scoreboard, "playoffs", False),
-                "start_date": str(getattr(scoreboard, "start", "")),
-                "end_date": str(getattr(scoreboard, "end", "")),
-                "current": getattr(scoreboard, "current", False),
+                "team1": team1["team"],
+                "team1_score": team1["wins"],
+
+                "team2": team2["team"],
+                "team2_score": team2["wins"],
+
+                "ties": team1["ties"],
+                "matchup_id": matchup_id,
+
+                "period_name": period_name,
+                "period_dates": period_dates
             }
 
             matchups_list.append(matchup_data)
 
-        return {"matchups": matchups_list}
+        if not matchups_list:
+            return {
+                "error": "No completed matchup scores found",
+                "period": period_name,
+                "dates": period_dates
+            }
+
+        print(
+            f"✅ Found {len(matchups_list)} matchups "
+            f"for {period_name}"
+        )
+
+        for matchup in matchups_list:
+            print(
+                f"{matchup['team1']} "
+                f"{matchup['team1_score']}-"
+                f"{matchup['team2_score']}-"
+                f"{matchup['ties']} "
+                f"{matchup['team2']}"
+            )
+
+        return {
+            "period": period_name,
+            "dates": period_dates,
+            "matchups": matchups_list
+        }
 
     except Exception as e:
         import traceback
         traceback.print_exc()
+
         return {"error": str(e)}
+
     
 @app.get("/transactions")
 def get_transactions(count: int = 100):
@@ -301,3 +553,255 @@ def get_transactions(count: int = 100):
         import traceback
         traceback.print_exc()
         return {"error": f"Internal error: {str(e)}"}
+
+
+
+@app.get("/datadump")
+def datadump():
+    if not login_success or api is None:
+        return {"error": "Not logged in"}
+
+    print("\n")
+    print("=" * 100)
+    print("FANTRAX MATCHUP DATA DUMP")
+    print("=" * 100)
+
+    # ----------------------------------------------------------
+    # OPTION 1: Try the League scoring_period_results() method
+    # ----------------------------------------------------------
+    print("\n")
+    print("=" * 80)
+    print("OPTION 1: api.scoring_period_results()")
+    print("=" * 80)
+
+    try:
+        if hasattr(api, "scoring_period_results"):
+
+            result = api.scoring_period_results(
+                season=True,
+                playoffs=False
+            )
+
+            print("SUCCESS")
+            print("Type:", type(result))
+            print("Raw result:")
+            print(repr(result))
+
+            if hasattr(result, "__dict__"):
+                print("\nResult attributes:")
+                print(vars(result))
+
+            if isinstance(result, dict):
+                print("\nDictionary keys:")
+                print(result.keys())
+
+                for key, value in result.items():
+                    print(f"\n--- Period {key} ---")
+                    print("Type:", type(value))
+                    print("Value:")
+                    print(repr(value))
+
+                    if hasattr(value, "__dict__"):
+                        print("Attributes:")
+                        print(vars(value))
+
+        else:
+            print("api.scoring_period_results() does not exist")
+
+    except Exception as e:
+        print("FAILED:")
+        print(repr(e))
+
+    # ----------------------------------------------------------
+    # OPTION 2: Try api.standings()
+    # ----------------------------------------------------------
+    print("\n")
+    print("=" * 80)
+    print("OPTION 2: api.standings()")
+    print("=" * 80)
+
+    try:
+        if hasattr(api, "standings"):
+
+            result = api.standings()
+
+            print("SUCCESS")
+            print("Type:", type(result))
+            print("Raw result:")
+            print(repr(result))
+
+            if hasattr(result, "__dict__"):
+                print("\nStandings attributes:")
+                print(vars(result))
+
+        else:
+            print("api.standings() does not exist")
+
+    except Exception as e:
+        print("FAILED:")
+        print(repr(e))
+
+    # ----------------------------------------------------------
+    # OPTION 3: Try raw Fantrax getStandings / SCHEDULE request
+    # ----------------------------------------------------------
+    print("\n")
+    print("=" * 80)
+    print("OPTION 3: RAW getStandings / SCHEDULE")
+    print("=" * 80)
+
+    try:
+        session = getattr(api, "session", None)
+
+        if session is None:
+            session = getattr(api, "_session", None)
+
+        if session is None:
+            print("Could not find Fantrax session on api object")
+
+        else:
+
+            request_data = {
+                "msgs": [
+                    {
+                        "method": "getStandings",
+                        "data": {
+                            "leagueId": FANTRAX_LEAGUE_ID,
+                            "view": "SCHEDULE"
+                        }
+                    }
+                ]
+            }
+
+            print("\nRequest:")
+            print(repr(request_data))
+
+            response = session.post(
+                "https://www.fantrax.com/fxpa/req",
+                params={
+                    "leagueId": FANTRAX_LEAGUE_ID
+                },
+                json=request_data
+            )
+
+            print("\nHTTP Status:")
+            print(response.status_code)
+
+            print("\nRAW RESPONSE:")
+            print(response.text)
+
+    except Exception as e:
+        print("FAILED:")
+        print(repr(e))
+
+    # ----------------------------------------------------------
+    # OPTION 4: Try raw getStandings without SCHEDULE
+    # ----------------------------------------------------------
+    print("\n")
+    print("=" * 80)
+    print("OPTION 4: RAW getStandings")
+    print("=" * 80)
+
+    try:
+        session = getattr(api, "session", None)
+
+        if session is None:
+            session = getattr(api, "_session", None)
+
+        if session is None:
+            print("Could not find Fantrax session on api object")
+
+        else:
+
+            request_data = {
+                "msgs": [
+                    {
+                        "method": "getStandings",
+                        "data": {
+                            "leagueId": FANTRAX_LEAGUE_ID
+                        }
+                    }
+                ]
+            }
+
+            print("\nRequest:")
+            print(repr(request_data))
+
+            response = session.post(
+                "https://www.fantrax.com/fxpa/req",
+                params={
+                    "leagueId": FANTRAX_LEAGUE_ID
+                },
+                json=request_data
+            )
+
+            print("\nHTTP Status:")
+            print(response.status_code)
+
+            print("\nRAW RESPONSE:")
+            print(response.text)
+
+    except Exception as e:
+        print("FAILED:")
+        print(repr(e))
+
+    # ----------------------------------------------------------
+    # OPTION 5: Try live scoring
+    # ----------------------------------------------------------
+    print("\n")
+    print("=" * 80)
+    print("OPTION 5: RAW getLiveScoringStats")
+    print("=" * 80)
+
+    try:
+        session = getattr(api, "session", None)
+
+        if session is None:
+            session = getattr(api, "_session", None)
+
+        if session is None:
+            print("Could not find Fantrax session on api object")
+
+        else:
+
+            request_data = {
+                "msgs": [
+                    {
+                        "method": "getLiveScoringStats",
+                        "data": {
+                            "leagueId": FANTRAX_LEAGUE_ID,
+                            "newView": "true"
+                        }
+                    }
+                ]
+            }
+
+            print("\nRequest:")
+            print(repr(request_data))
+
+            response = session.post(
+                "https://www.fantrax.com/fxpa/req",
+                params={
+                    "leagueId": FANTRAX_LEAGUE_ID
+                },
+                json=request_data
+            )
+
+            print("\nHTTP Status:")
+            print(response.status_code)
+
+            print("\nRAW RESPONSE:")
+            print(response.text)
+
+    except Exception as e:
+        print("FAILED:")
+        print(repr(e))
+
+    print("\n")
+    print("=" * 100)
+    print("END FANTRAX MATCHUP DATA DUMP")
+    print("=" * 100)
+    print("\n")
+
+    return {
+        "status": "Data dump complete. Check the Python console."
+    }
