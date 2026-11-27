@@ -3,6 +3,8 @@ from discord.ext import commands
 import aiohttp # Import aiohttp for asynchronous HTTP requests
 import asyncio  # Import asyncio for handling asynchronous operations
 import os # Import os for interacting with the operating system
+import tempfile
+from collections import defaultdict
 import logging  # Import logging for logging messages to console
 from dotenv import load_dotenv # Import load_dotenv from dotenv for loading environment variables
 from bs4 import BeautifulSoup  # Import BeautifulSoup for scraping
@@ -21,6 +23,13 @@ import io # Import io for handling file-like
 import random
 #from fastapi import FastAPI
 from typing import Optional
+import re
+import pytesseract
+import pypdfium2 as pdfium
+from PIL import Image
+import json
+import xml.etree.ElementTree as ET
+import unicodedata
 
 VERSION = "0.5.0"
 
@@ -72,6 +81,12 @@ client = discord.Client(intents=intents)
 
 intents = discord.Intents.default()  # Or use discord.Intents.all() if needed
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+print("Tesseract exe:", pytesseract.pytesseract.tesseract_cmd)
+print("TESSDATA_PREFIX:", os.environ.get("TESSDATA_PREFIX"))
+print("Tesseract version:", pytesseract.get_tesseract_version())
+print("Available langs:", pytesseract.get_languages(config=""))
 
 # NHL API Endpoints
 NHL_STATS_URL = "https://api.nhle.com/stats/rest/en/skater/summary?cayenneExp=playerId={}"
@@ -174,6 +189,7 @@ TEAM_NAME_TO_ABBREVIATION = {
     "Washington Capitals": "WSH", "Capitals de Washington": "WSH", "Washington": "WSH", "Capitals": "WSH", "Caps": "WSH",
     "Winnipeg Jets": "WPG", "Jets de Winnipeg": "WPG", "Jets": "WPG", "Winnipeg": "WPG",
 }
+
 
 #check if fantrax script is working
 def check_fantrax_status():
@@ -293,38 +309,253 @@ async def get_playoff_odds(team_name=None):
 
 
 # Scrape world juniors
-async def get_u20_world_juniors_stats():
-    url = "https://www.hokejspravy.sk/rubriky/ms-v-hokeji/statistiky-ms-u20-kanadske-bodovanie-strelci-brankari_1974.html"
+
+HYDRA_BASE = "https://stats.iihf.com/Hydra/37/"
+HYDRA_INDEX = HYDRA_BASE + "index.html"
+
+# --- Configure these to your local Tesseract install ---
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+os.environ["TESSDATA_PREFIX"] = r"C:\Program Files\Tesseract-OCR\tessdata"
+
+# Finds "Player Statistics by Team" PDFs like: IHM0370CAN_83_2_0.pdf
+TEAM_PDF_RE = re.compile(r'(IHM0370([A-Z]{3})_83_(\d+)_0\.pdf)', re.I)
+
+ROW_RE = re.compile(
+    r"""^\s*
+    (?P<rank>\d+)\.?\s+
+    (?P<name>.+?)\s+
+    (?P<jersey>\d{1,2})\s+
+    (?P<team>[A-Z]{3})\s+
+    (?P<pos>[A-Z])\s+
+    (?P<gp>\d+)\s+
+    (?P<g>\d+)\s+
+    (?P<a>\d+)\s+
+    (?P<pts>\d+)\s+
+    (?P<pim>\d+)
+    (?:\s+(?P<pm>[+-]?\d+))?
+    \s*$
+    """,
+    re.VERBOSE
+)
+
+def _safe_int(s, default=0):
+    try:
+        return int(str(s).strip())
+    except:
+        return default
+
+def _normalize_header_tokens(line: str):
+    # Normalize OCR weirdness: punctuation and repeated spaces
+    line = line.replace("No.", "No").replace("Pos.", "Pos")
+    line = re.sub(r"\s+", " ", line).strip()
+    # split into tokens, strip dots/colons
+    toks = [re.sub(r"[^\w+/-]", "", t) for t in line.split()]
+    toks = [t for t in toks if t]
+    return [t.upper() for t in toks]
+
+def _looks_like_header(toks):
+    # Must include core stat columns
+    needed = {"GP", "G", "A", "PTS", "PIM"}
+    return needed.issubset(set(toks)) and ("NAME" in toks or "NO" in toks)
+
+POS_SET = {"F", "D", "G"}
+
+def _clean_and_split_tokens(line: str):
+    # Normalize OCR junk
+    line = line.replace("°", " ").replace("º", " ").replace("·", " ")
+    line = re.sub(r"\s+", " ", line).strip()
+
+    # Split tokens, but also fix common OCR merge "3.1" -> "3 1" (only digit-dot-digit)
+    fixed = []
+    for t in line.split():
+        t2 = re.sub(r"^(\d)\.(\d)$", r"\1 \2", t)  # only 1-digit . 1-digit
+        fixed.extend(t2.split())
+
+    return fixed
+
+def _parse_player_table_from_ocr(text: str, team_hint: str, debug=False):
+    players = []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    header_tokens = None
+    for ln in lines:
+        toks = _normalize_header_tokens(ln)
+        if _looks_like_header(toks):
+            header_tokens = toks
+            if debug:
+                print("DEBUG: Found header:", header_tokens)
+            break
+
+    if not header_tokens:
+        return players  # no table on this page
+
+    for raw in lines:
+        toks = _clean_and_split_tokens(raw)
+        if len(toks) < 6:
+            continue
+
+        # jersey number must be first token
+        if not toks[0].isdigit():
+            continue
+        jersey = int(toks[0])
+
+        # remove captain markers that OCR sometimes adds in the middle
+        toks = [t for t in toks if t not in {"+A", "+C"}]
+
+        # find POS token location
+        pos_idx = None
+        for i in range(1, min(len(toks), 20)):  # early tokens only (name+pos are early)
+            if toks[i] in POS_SET:
+                pos_idx = i
+                break
+        if pos_idx is None:
+            continue
+
+        pos = toks[pos_idx]
+
+        # name is everything between jersey and pos
+        name_tokens = toks[1:pos_idx]
+        name = " ".join(name_tokens).strip()
+        if not name or len(name) < 2:
+            continue
+
+        # After POS, collect integers in order: GP, G, A, PTS, PIM
+        nums = []
+        for t in toks[pos_idx + 1:]:
+            # +/- can be like +4 or -1, ignore it for the “5 required ints”
+            if re.fullmatch(r"[+-]\d+", t):
+                continue
+            if t.isdigit():
+                nums.append(int(t))
+                if len(nums) >= 5:
+                    break
+
+        if len(nums) < 5:
+            # not enough stats found on this line
+            continue
+
+        gp, g, a, pts, pim = nums[:5]
+
+        players.append({
+            "player": name,
+            "team": team_hint,
+            "pos": pos,
+            "gp": gp,
+            "goals": g,
+            "assists": a,
+            "points": pts if pts != 0 else (g + a),
+            "pim": pim,
+        })
+
+    if debug:
+        print(f"DEBUG: {team_hint} parsed rows: {len(players)}")
+        if players[:3]:
+            print("DEBUG sample:", players[:3])
+
+    return players
+
+def _ocr_pdf_bytes(pdf_bytes: bytes, scale: float = 3.5, debug=False):
+    """
+    Returns OCR text per page.
+    """
+    fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+
+        doc = pdfium.PdfDocument(pdf_path)
+        page_texts = []
+        for i in range(len(doc)):
+            page = doc[i]
+            bitmap = page.render(scale=scale)
+            img = bitmap.to_pil()
+            text = pytesseract.image_to_string(img, lang="eng")
+            page_texts.append(text)
+
+        return page_texts
+    finally:
+        try:
+            os.remove(pdf_path)
+        except:
+            pass
+
+async def _fetch_bytes(url: str) -> bytes:
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status != 200:
-                return f"❌ HTTP {resp.status}"
+                raise RuntimeError(f"HTTP {resp.status} for {url}")
+            return await resp.read()
 
-            html = await resp.text()
-            soup = BeautifulSoup(html, "html.parser")
+async def _get_latest_team_stat_pdfs(debug=False) -> dict:
+    """
+    Returns dict: { 'CAN': 'https://.../IHM0370CAN_83_2_0.pdf', ... }
+    Picks highest revision number per team.
+    """
+    html = (await _fetch_bytes(HYDRA_INDEX)).decode("utf-8", errors="ignore")
 
-            # find table
-            table = soup.find("table")
-            if not table:
-                return "⚠️ No table found"
+    best = {}  # team -> (rev, filename)
+    for filename, team, rev in TEAM_PDF_RE.findall(html):
+        rev = int(rev)
+        team = team.upper()
+        if team not in best or rev > best[team][0]:
+            best[team] = (rev, filename)
 
-            players = []
-            for row in table.find_all("tr")[1:]:  # skip header
-                cols = row.find_all("td")
-                if len(cols) >= 4:
-                    player = cols[0].get_text(strip=True)
-                    goals = int(cols[2].get_text(strip=True) or "0")
-                    assists = int(cols[3].get_text(strip=True) or "0")
-                    points = int(cols[4].get_text(strip=True) or (goals + assists))
-                    players.append({
-                        "player": player,
-                        "goals": goals,
-                        "assists": assists,
-                        "points": points
-                    })
-            return players
+    out = {team: HYDRA_BASE + fn for team, (rev, fn) in best.items()}
+    if debug:
+        print("DEBUG: Found team PDFs:", out)
+    return out
 
-#NHL API
+async def get_u20_world_juniors_stats(limit=None, debug=False):
+    """
+    Returns merged list of ALL players across teams, sorted by points then goals.
+    """
+    team_pdfs = await _get_latest_team_stat_pdfs(debug=debug)
+
+    all_players = []
+    for team, pdf_url in sorted(team_pdfs.items()):
+        if debug:
+            print(f"\nDEBUG: Team {team} -> {pdf_url}")
+
+        pdf_bytes = await _fetch_bytes(pdf_url)
+
+        # OCR each page
+        page_texts = _ocr_pdf_bytes(pdf_bytes, scale=3.5, debug=debug)
+
+        team_players = []
+        for page_i, text in enumerate(page_texts, start=1):
+            if debug:
+                print(f"DEBUG: {team} page {page_i} OCR preview:\n{text[:300]}\n")
+
+            team_players.extend(_parse_player_table_from_ocr(text, team_hint=team, debug=debug))
+
+        if debug:
+            print(f"DEBUG: Parsed {len(team_players)} players for {team}")
+
+        all_players.extend(team_players)
+
+    # De-dupe (sometimes goalies/extra lines can duplicate); key by (team,name)
+    dedup = {}
+    for p in all_players:
+        key = (p["team"], p["player"])
+        # keep the one with higher GP/PTS if duplicates occur
+        if key not in dedup:
+            dedup[key] = p
+        else:
+            if (p["gp"], p["points"]) > (dedup[key]["gp"], dedup[key]["points"]):
+                dedup[key] = p
+
+    merged = list(dedup.values())
+    merged.sort(key=lambda p: (p["points"], p["goals"]), reverse=True)
+
+    if limit:
+        merged = merged[:limit]
+
+    if debug:
+        print("\nDEBUG: Total merged players:", len(merged))
+        print("DEBUG: First 5:", merged[:5])
+
+    return merged
 
 async def get_player_info(player_id):
     """Fetch player info to verify if the player exists and return their full name."""
@@ -791,6 +1022,239 @@ async def get_latest_fantasy_hockey_image(username: str) -> Optional[str]:
 
     return None
 
+#Twitter Posting
+
+
+# ==========================================
+# LIVE HOCKEY INSIDER RSS FEED
+# ==========================================
+
+RSS_FEEDS = {
+    "FriedgeHNIC": (
+        "https://rsshub.app/twitter/user/FriedgeHNIC"
+    ),
+    "PierreVLeBrun": (
+        "https://rsshub.app/twitter/user/PierreVLeBrun"
+    )
+}
+
+RSS_STATE_FILE = "tweet_state.json"
+
+# This task is started once when the Discord bot connects.
+rss_monitor_task = None
+
+
+def load_rss_state():
+    """Load the last processed entry ID for each account."""
+    try:
+        with open(RSS_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_rss_state(state):
+    """Save processed entry IDs to prevent duplicate posts."""
+    with open(RSS_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=4)
+
+
+def get_xml_child(element, name):
+    """Find a direct XML child by its local tag name."""
+    for child in element:
+        if child.tag.split("}")[-1] == name:
+            return child
+    return None
+
+
+def parse_rss_entries(xml_text):
+    """Parse RSS or Atom entries into a common format."""
+    root = ET.fromstring(xml_text)
+
+    entries = []
+
+    for item in root.iter():
+        tag = item.tag.split("}")[-1]
+
+        if tag not in ("item", "entry"):
+            continue
+
+        entry_id = None
+        link = None
+        title = ""
+        description = ""
+
+        for child in item:
+            child_name = child.tag.split("}")[-1]
+
+            if child_name in ("guid", "id"):
+                entry_id = (child.text or "").strip()
+
+            elif child_name == "link":
+                link = (
+                    child.attrib.get("href")
+                    or (child.text or "").strip()
+                )
+
+            elif child_name == "title":
+                title = child.text or ""
+
+            elif child_name in ("description", "summary", "encoded", "content"):
+                description = child.text or description
+
+        entry_id = entry_id or link
+
+        if not entry_id:
+            continue
+
+        # Convert any HTML in the tweet into readable text.
+        text_content = BeautifulSoup(
+            description or title,
+            "html.parser"
+        ).get_text(" ", strip=True)
+
+        entries.append({
+            "id": entry_id,
+            "link": link,
+            "text": text_content or title
+        })
+
+    return entries
+
+
+async def fetch_rss_feed(session, url):
+    """Download and parse one RSS feed."""
+    async with session.get(url) as response:
+        if response.status != 200:
+            raise RuntimeError(
+                f"RSS returned HTTP {response.status}"
+            )
+
+        xml_text = await response.text()
+
+    return parse_rss_entries(xml_text)
+
+
+async def post_rss_entry(channel, username, entry):
+    """Post a new insider update into botspam."""
+
+    embed = discord.Embed(
+        title=f"🏒 @{username}",
+        description=entry["text"][:4000],
+        color=discord.Color.blue()
+    )
+
+    if entry.get("link"):
+        embed.url = entry["link"]
+
+    await channel.send(
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions.none()
+    )
+
+
+async def monitor_rss_feeds():
+    """Continuously monitor the selected hockey insider feeds."""
+
+    channel = client.get_channel(DISCORD_BOTSPAM_CHANNEL_ID)
+
+    if channel is None:
+        try:
+            channel = await client.fetch_channel(
+                DISCORD_BOTSPAM_CHANNEL_ID
+            )
+        except Exception as e:
+            logging.error(f"Could not find botspam channel: {e}")
+            return
+
+    state = load_rss_state()
+
+    timeout = aiohttp.ClientTimeout(total=25)
+
+    headers = {
+        "User-Agent": "FantasyHockeyDiscordBot/1.0"
+    }
+
+    logging.info("Starting hockey insider RSS monitoring.")
+
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        headers=headers
+    ) as session:
+
+        while True:
+
+            for username, feed_url in RSS_FEEDS.items():
+
+                try:
+                    entries = await fetch_rss_feed(
+                        session,
+                        feed_url
+                    )
+
+                    if not entries:
+                        logging.info(
+                            f"No RSS entries found for @{username}"
+                        )
+                        continue
+
+                    # Feeds normally return newest entries first.
+                    newest_id = entries[0]["id"]
+
+                    # First run: save the latest entry without
+                    # posting historical updates.
+                    if username not in state:
+                        state[username] = newest_id
+                        save_rss_state(state)
+
+                        logging.info(
+                            f"Initialized @{username} RSS tracking."
+                        )
+                        continue
+
+                    last_id = state[username]
+
+                    # Find the previously processed entry.
+                    old_index = next(
+                        (
+                            i for i, entry in enumerate(entries)
+                            if entry["id"] == last_id
+                        ),
+                        None
+                    )
+
+                    if old_index is None:
+                        # Previous entry has fallen out of the feed.
+                        # Post only the newest one to avoid flooding.
+                        new_entries = entries[:1]
+                    else:
+                        # Process new entries oldest first.
+                        new_entries = entries[:old_index][::-1]
+
+                    for entry in new_entries:
+
+                        await post_rss_entry(
+                            channel,
+                            username,
+                            entry
+                        )
+
+                        # Save only after successful Discord posting.
+                        state[username] = entry["id"]
+                        save_rss_state(state)
+
+                        logging.info(
+                            f"Posted new update from @{username}"
+                        )
+
+                except Exception as e:
+                    logging.error(
+                        f"RSS error for @{username}: {e}"
+                    )
+
+            # Random interval between checks.
+            await asyncio.sleep(random.randint(50, 60))
+
 
 #Reading Functions 
 
@@ -818,7 +1282,7 @@ async def on_message(message):
                     "`!fantraxteams` - Shows the Fantrax Team names and Nicknames\n"
                     "`!fantraxroster <Team>` - Shows the Fantrax Roster for requested team. (Uses Team names or Nicknames)\n"
                     "`---- Fun Commands ----`\n"
-                    "`!inform`, `!freepetey`, `!quack`, `!dops`, `!canada`, `!firegreg`, `!fuckyou`, `!petey`, `!bracket`, `!playoffs`, `!pylon`, `!bolduc`, `!gang <message>` \n")
+                    "`!inform`, `!freepetey`, `!quack`, `!dops`, `!canada`, `!firegreg`, `!fuckyou`, `!petey`, `!frlg`, `!bracket`, `!playoffs`, `!pylon`, `!bolduc`, `!pride`, `!oilers`, `!gang <message>` \n")
 
     elif content_lower.startswith("!standings"):
         allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Check if the message is in one of the allowed channels
@@ -893,26 +1357,37 @@ async def on_message(message):
 
     elif content_lower.startswith("!wj"):
         await message.channel.send("📡 Fetching World Juniors scoring leaders...")
-    
+
         try:
-            # Call your async scraper
             players_stats = await get_u20_world_juniors_stats()
-        
+
             if not players_stats:
                 await message.channel.send("❌ No data found from IIHF.")
                 return
 
-            # Print the raw data to your console
             print("=== World Juniors Scoring Leaders ===")
-            for player in players_stats:
-                print(f"{player['player']}: Goals={player['goals']}, Assists={player['assists']}, Points={player['points']}")
-        
-            await message.channel.send("✅ Data fetched! Check your console for output.")
+            for i, p in enumerate(players_stats, start=1):
+                print(
+                    f"{i}. {p['player']} ({p['team']}) "
+                    f"G={p['goals']} A={p['assists']} PTS={p['points']} PIM={p['pim']}"
+                )
 
+            await message.channel.send("✅ Data fetched! Check your console for output.")
+            msg = "**🏒 World Juniors Scoring Leaders (All Teams)**\n"
+            for i, p in enumerate(players_stats[:25], start=1):
+                msg += (
+                    f"{i}. **{p['player']}** ({p['team']}) — "
+                    f"{p['goals']}G {p['assists']}A {p['points']}P, {p['pim']} PIM\n"
+                )
+
+            await message.channel.send(msg)
         except Exception as e:
-            await message.channel.send(f"🚨 Error fetching World Juniors data: `{e}`")    
+            await message.channel.send(f"🚨 Error fetching World Juniors data: `{e}`")
 
     ##Shitpost messages
+
+    elif content_lower.startswith("!mcdavid"):
+        await message.channel.send("https://www.youtube.com/watch?v=pr30MuZ23ew")
 
     elif content_lower.startswith("!inform"):
         await message.channel.send("'Moron' was coined in 1910 by psychologist Henry H. Goddard from the Ancient Greek word μωρός (moros), which meant 'dull' and used to describe a person with a mental age in adulthood of between 7 and 10 on the Binet scale. It was once applied to people with an intelligence quotient (IQ) of 51 to 70, being superior in one degree to 'imbecile' (IQ of 2 to 50) and superior in two degrees to 'idiot' (IQ of  to 25). The word moron, along with others including 'idiotic', 'imbecilic', 'stupid', and 'feeble-minded', was formerly considered a valid descriptor in the psychological community, but it is now deprecated in use by psychologists. Following opposition to Goddard's attempts to popularize his ideas,Goddard recanted his earlier assertions about the moron: 'It may still be objected that moron parents are likely to have imbecile or idiot children. There is not much evidence that this is the case. The danger is probably negligible.'")
@@ -920,8 +1395,14 @@ async def on_message(message):
     elif content_lower.startswith("!freepetey"):
         await message.channel.send("We will hold Petey hostage until our demands are met!")
 
+    elif content_lower.startswith("!weather"):
+        await message.channel.send("Crofton can experience some icy conditions")
+
     elif content_lower.startswith("!quack"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsneak-peak-of-ne-anaheim-ducks-logo-v0-6eugvzi3z57d1.jpeg%3Fauto%3Dwebp%26s%3D0ebf31d88d0cbd4d591698c02f145a042e815799") 
+
+    elif content_lower.startswith("!callme"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fnathan-mackinnon-has-received-a-five-minute-major-following-v0-81m5pd4lbcog1.jpeg%3Fwidth%3D1170%26format%3Dpjpg%26auto%3Dwebp%26s%3D4b7e3d2d74169786fbb940ef589d5364e2313b15") 
 
     elif content_lower.startswith("!dops"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fseth-jarvis-leaves-the-game-injured-in-ot-tripped-by-v0-2itys2bbz98g1.jpeg%3Fwidth%3D320%26crop%3Dsmart%26auto%3Dwebp%26s%3D47f03b5a3f32d481598ee02dd2486f35b52c5125") 
@@ -938,20 +1419,32 @@ async def on_message(message):
     elif content_lower.startswith("!fuckyou"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fsaturday-headlines-friedman-reports-quinn-hughes-told-the-v0-lcwyyxll347g1.jpeg%3Fauto%3Dwebp%26s%3Dd8893780aaa6505c959b444647e5dc565f4aeb4e")
 
+    elif content_lower.startswith("!frlg"):
+        await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Ffire-red-or-leaf-green-v0-7ujmn3g42u9d1.jpeg%3Fauto%3Dwebp%26s%3Db74434ceb2e8044b03485bdb4e8be477e785e3e7")
+
     elif content_lower.startswith("!petey"):
         await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Foehv1qdksd621.jpg")
 
+    elif content_lower.startswith("!oilers"):
+            await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fvan-6-edm-5-paul-cotter-scores-his-second-of-the-night-to-v0-n58zj1soclsh1.png%3Fwidth%3D1672%26format%3Dpng%26auto%3Dwebp%26s%3Dff9e638d86b821fcb54beb8302abe14d8f9dd7c7")
+
+    elif content_lower.startswith("!pride"):
+            await send_embedded_image(message.channel, "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2F0tp5v5i31ltg1.png")
+    
+
+
     elif content_lower.startswith("!bracket"):
-        await message.channel.send("https://bracketchallenge.nhl.com/en/leagues/75643 Password hockey. Sign up before 3PST TODAY \n\n jk you are too late")
+        await message.channel.send("https://bracketchallenge.nhl.com/en/leagues/57242 Password ape. Sign up now or be forever bedarded")
 
     elif content_lower.strip() in ("!playoff", "!playoffs"):
         await message.channel.send(
         "Hey everyone, its that time of year again - NHL Playoffs  meaning the yearly playoff pool. \n\n"
         "Same website as usual: https://hockeydraft.ca/ \n"
         "Login information (please be sure \"playoffs\" is checked before attempting to sign in):\n\n"
-        "          Username: RussianMafia8\n"
-        "          Password: great8 \n\n"
-        "When you login, to create your team, please go to the 'Entry Form' tab near the top left. From there, you will see 25 boxes of players/goalies/teams to select from. You may make one selection per box. Please remember once the first game starts, there will be no changes to your team. In other words, the team you select by the time of the first playoff game will be your team for the entire playoffs. \n\n"
+        "          Username (in honour of buffalos first playoff appearance in what 14 years?): SabreSoup\n"
+        "          Password: tagethegoat \n\n"
+        "When you login, to create your team, please go to the 'Entry Form' tab near the top left. From there, you will see 23 boxes of players/goalies/teams to select from. You may make one selection per box. Some boxes, such as #13 and #14, have a list of players to scroll from.  \n\n"
+        "Please remember once the first game starts, there will be no changes to your team. In other words, the team you select by the time of the first playoff game will be your team for the entire playoffs. \n\n"
         "The point system can be seen at the bottom of the page of your entry form when you create your team. \n\n"
         "Buy-in is $20 paid to jmsparmar@shaw.ca - if i dont receive payment prior to the first game, i may delete your team. To make it easier on me, if you could please indicate your team name as a message that forms the etransfer, that would help me out a lot (especially for those people that i do not know lol). \n\n"
         "This year, top 3 get money (as usual) and i am reimplementing the return of $20 if you come last. \n\n"
@@ -1072,65 +1565,312 @@ async def on_message(message):
         except Exception as e:
             await message.channel.send(f"🚨 Error fetching Fantrax teamlist: `{e}`")
 
-    elif content_lower.startswith("!fantraxrosterlist"):
-        await message.channel.send("📡 Fetching current Fantrax rosterlist...")
-        
-        try:
-                async with aiohttp.ClientSession() as session:    
-                    async with session.get(f"{FANTRAX_API}/rosters") as resp:
-                        if resp.status != 200:
-                            await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
-                            return
 
-                        data = await resp.json()
-                        print(data)
-                        player_names = [p.get("name") for p in data.get("players", [])]
-                        print(player_names)
-                   
-                        await message.channel.send("✅ Fantrax roster list fetched.")
-                        await message.channel.send("✅ Prepare for message hell:" + player_names['players'])
+    elif (
+    content_lower == "!fantraxmatchup"
+    or content_lower.startswith("!fantraxmatchup ")
+):
 
-        except Exception as e:
-                await message.channel.send(f"🚨 Error fetching Fantrax rosterlist: `{e}`")
+        # Get everything after the command
+        team_identifier = message.content[len("!fantraxmatchup"):].strip()
 
-    elif content_lower.startswith("!fantraxroster "):
-        #await message.channel.send("📡 Fetching current Fantrax rosterlist...")
-        # Extract the team query
-        team_query = message.content[len("!fantraxroster "):].strip().lower()
+        if not team_identifier:
+            await message.channel.send(
+                "❌ Usage: `!fantraxmatchup <team name>` "
+                "or `!fantraxmatchup all`"
+            )
+            return
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{FANTRAX_API}/rosters") as resp:
+
+                async with session.get(
+                    f"{FANTRAX_API}/matchups"
+                ) as resp:
+
                     if resp.status != 200:
-                        await message.channel.send(f"❌ Failed to contact Fantrax API (HTTP {resp.status}).")
+                        await message.channel.send(
+                            f"❌ Failed to contact Fantrax API "
+                            f"(HTTP {resp.status})."
+                        )
                         return
 
                     data = await resp.json()
-                    rosters = data.get("rosters", [])
 
-            # Search for the team
-            matched_team = None
-            for team in rosters:
-                if team_query in team.get("name", "").lower() or team_query in team.get("nickname", "").lower():
-                    matched_team = team
-                    break
-
-            if not matched_team:
-                await message.channel.send(f"❌ No team found matching '{team_query}'.")
+            if "error" in data:
+                await message.channel.send(
+                    f"❌ Fantrax error: `{data['error']}`"
+                )
                 return
 
-            # Create the embed
+            matchups = data.get("matchups", [])
+
+            if not matchups:
+                await message.channel.send(
+                    "❌ No matchups were returned."
+                )
+                return
+
+            # ----------------------------------
+            # SHOW ALL MATCHUPS
+            # ----------------------------------
+
+            if team_identifier.casefold() == "all":
+
+                matchup_lines = []
+
+                for matchup in matchups:
+
+                    matchup_lines.append(
+                        f"**{matchup['team1']}** "
+                        f"`{matchup['team1_score']}-"
+                        f"{matchup['team2_score']}-"
+                        f"{matchup['ties']}` "
+                        f"**{matchup['team2']}**"
+                    )
+
+                embed = discord.Embed(
+                    title="Fantrax Matchups",
+                    description="\n".join(matchup_lines),
+                    color=discord.Color.red()
+                )
+
+                embed.set_footer(
+                    text=f"Scoring Period {data.get('period', '?')}"
+                )
+
+                await message.channel.send(embed=embed)
+                return
+
+            # ----------------------------------
+            # FIND ONE TEAM'S MATCHUP
+            # ----------------------------------
+
+            selected_matchup = None
+
+            for matchup in matchups:
+
+                if (
+                    team_identifier.casefold() == matchup["team1"].casefold()
+                    or team_identifier.casefold() == matchup["team2"].casefold()
+                ):
+                    selected_matchup = matchup
+                    break
+
+            if selected_matchup is None:
+                await message.channel.send(
+                    f"❌ Could not find a matchup for **{team_identifier}**."
+                )
+                return
+
+            # Display the matchup
             embed = discord.Embed(
-                title=f"{matched_team['name']} ({matched_team['nickname']}) Roster",
-                description="\n".join(matched_team['players']),
-                color=discord.Color.blue()
+                title="Fantrax Matchup",
+                description=(
+                    f"**{selected_matchup['team1']}** "
+                    f"`{selected_matchup['team1_score']}-"
+                    f"{selected_matchup['team2_score']}-"
+                    f"{selected_matchup['ties']}` "
+                    f"**{selected_matchup['team2']}**"
+                ),
+                color=discord.Color.red()
             )
 
-            # Send the embed
+            embed.set_footer(
+                text=f"Scoring Period {data.get('period', '?')}"
+            )
+
             await message.channel.send(embed=embed)
 
         except Exception as e:
-            await message.channel.send(f"🚨 Error fetching Fantrax rosterlist: `{e}`")
+            await message.channel.send(
+                f"🚨 Error fetching Fantrax matchup: `{e}`"
+            )
+
+    elif content_lower.startswith("!fantraxroster"):
+
+        # Normalize team names and nicknames for matching
+        def normalize_team_identifier(value):
+            value = unicodedata.normalize("NFKD", str(value))
+
+            value = "".join(
+                char for char in value
+                if not unicodedata.combining(char)
+            )
+
+            return value.casefold().strip()
+
+        # Get everything after !fantraxroster
+        team_identifier = message.content[len("!fantraxroster"):].strip()
+
+        if not team_identifier:
+            await message.channel.send(
+                "❌ Usage: `!fantraxroster <team name or abbreviation>`"
+            )
+            return
+
+        try:
+            async with aiohttp.ClientSession() as session:
+
+                async with session.get(
+                    f"{FANTRAX_API}/rosters",
+                    params={"team": team_identifier}
+                ) as resp:
+
+                    if resp.status != 200:
+                        await message.channel.send(
+                            f"❌ Failed to contact Fantrax API "
+                            f"(HTTP {resp.status})."
+                        )
+                        return
+
+                    data = await resp.json()
+
+            # API-level error
+            if "error" in data:
+                error_message = data["error"]
+
+                if "available_teams" in data:
+                    available = data["available_teams"]
+
+                    team_lines = [
+                        f"{t['name']} ({t['nickname']})"
+                        for t in available
+                    ]
+
+                    await message.channel.send(
+                        f"❌ {error_message}\n\n"
+                        f"Available teams:\n" +
+                        "\n".join(team_lines)
+                    )
+
+                else:
+                    await message.channel.send(
+                        f"❌ Fantrax error: `{error_message}`"
+                    )
+
+                return
+
+            rosters = data.get("rosters", [])
+
+            if not rosters:
+                await message.channel.send(
+                    "❌ No roster was returned."
+                )
+                return
+
+            # Normalize the user's input
+            team_identifier_normalized = normalize_team_identifier(
+                team_identifier
+            )
+
+            # Find team by exact name or nickname
+            roster = next(
+                (
+                    team for team in rosters
+                    if team_identifier_normalized == normalize_team_identifier(team["name"])
+                    or team_identifier_normalized == normalize_team_identifier(team["nickname"])
+                ),
+                None
+            )
+
+            if roster is None:
+
+                # Dynamically list available teams
+                team_lines = [
+                    f"{team['name']} ({team['nickname']})"
+                    for team in rosters
+                ]
+
+                await message.channel.send(
+                    f"❌ Could not find a team matching **{team_identifier}**.\n\n"
+                    f"**Available Teams:**\n" +
+                    "\n".join(team_lines)
+                )
+                return
+
+            team_name = roster["name"]
+            team_nickname = roster["nickname"]
+            players = roster.get("players", [])
+
+            if not players:
+                await message.channel.send(
+                    f"❌ No players found on the roster for "
+                    f"**{team_name} ({team_nickname})**."
+                )
+                return
+
+            # Build the message
+            roster_lines = []
+
+            roster_lines.append("**Main Roster**")
+
+            roster_lines.extend(
+                f"{i}. {player}"
+                for i, player in enumerate(players, 1)
+            )
+
+            roster_message = "\n".join(roster_lines)
+
+            embed = discord.Embed(
+                title=f"{team_name} Roster",
+                description=roster_message,
+                color=discord.Color.red()
+            )
+
+            embed.set_footer(
+                text=f"Fantrax team: {team_nickname}"
+            )
+
+            await message.channel.send(embed=embed)
+
+        except Exception as e:
+            await message.channel.send(
+                f"🚨 Error fetching Fantrax roster: `{e}`"
+            )
+
+
+    elif content_lower.startswith("!datadump"):
+
+        try:
+            async with aiohttp.ClientSession() as session:
+
+                async with session.get(
+                    f"{FANTRAX_API}/datadump"
+                ) as resp:
+
+                    if resp.status != 200:
+                        await message.channel.send(
+                            f"❌ Datadump failed "
+                            f"(HTTP {resp.status})."
+                        )
+                        return
+
+                    data = await resp.json()
+
+            if "error" in data:
+                await message.channel.send(
+                    f"❌ Fantrax API error: `{data['error']}`"
+                )
+                return
+
+            await message.channel.send(
+                "✅ Fantrax matchup data dump complete. "
+                "Check the Python console."
+            )
+
+        except Exception as e:
+            await message.channel.send(
+                f"🚨 Error running datadump: `{e}`"
+            )
+
+
+
+
+
+
+
+    
     
     elif content_lower.startswith("!fantraxstandings"):
         #allowed_channels = [DISCORD_BOTSPAM_CHANNEL_ID]  # Only allow in bot-spam channel
@@ -1289,6 +2029,8 @@ async def on_message(message):
 
 @client.event
 async def on_ready():
+    global rss_monitor_task
+
     """Start the bot and begin tracking player events."""
     print(f"Logged in as {client.user}")
 
